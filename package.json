@@ -288,6 +288,12 @@
       "hash": "QmcBWojPoNh4qm7zvv4qiepvCnnc7ALS9qcp7TNwwxT1gT",
       "name": "go.uuid",
       "version": "1.1.0"
+    },
+    {
+      "author": "why",
+      "hash": "QmQViVWBHbU6HmYjXcdNq7tVASCNgdg64ZGcauuDkLCivW",
+      "name": "go-ipfs-addr",
+      "version": "0.1.7"
     }
   ],
   "gxVersion": "0.4.0",
