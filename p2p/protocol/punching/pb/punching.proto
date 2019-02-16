@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package punching.pb;
+
+message Punching {
+    // addresses for peer to test connectivity
+    repeated string addresses = 1;
+}

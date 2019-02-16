@@ -15,6 +15,7 @@ import (
 	protocol "github.com/libp2p/go-libp2p-protocol"
 	identify "github.com/libp2p/go-libp2p/p2p/protocol/identify"
 	ping "github.com/libp2p/go-libp2p/p2p/protocol/ping"
+	punching "github.com/libp2p/go-libp2p/p2p/protocol/punching"
 	ma "github.com/multiformats/go-multiaddr"
 	madns "github.com/multiformats/go-multiaddr-dns"
 	msmux "github.com/multiformats/go-multistream"
@@ -56,7 +57,7 @@ const NATPortMap Option = iota
 type BasicHost struct {
 	network    inet.Network
 	mux        *msmux.MultistreamMuxer
-	ids        *identify.IDService
+	Ids        *identify.IDService
 	pings      *ping.PingService
 	natmgr     NATManager
 	maResolver *madns.Resolver
@@ -126,10 +127,10 @@ func NewHost(ctx context.Context, net inet.Network, opts *HostOpts) (*BasicHost,
 	}
 
 	if opts.IdentifyService != nil {
-		h.ids = opts.IdentifyService
+		h.Ids = opts.IdentifyService
 	} else {
 		// we can't set this as a default above because it depends on the *BasicHost.
-		h.ids = identify.NewIDService(h)
+		h.Ids = identify.NewIDService(h)
 	}
 
 	if uint64(opts.NegotiationTimeout) != 0 {
@@ -158,6 +159,9 @@ func NewHost(ctx context.Context, net inet.Network, opts *HostOpts) (*BasicHost,
 	if opts.EnablePing {
 		h.pings = ping.NewPingService(h)
 	}
+
+	// FIXME move out of basic_host
+	punching.NewPunchingService(h, h.Ids)
 
 	net.SetConnHandler(h.newConnHandler)
 	net.SetStreamHandler(h.newStreamHandler)
@@ -206,7 +210,7 @@ func (h *BasicHost) newConnHandler(c inet.Conn) {
 	// Clear protocols on connecting to new peer to avoid issues caused
 	// by misremembering protocols between reconnects
 	h.Peerstore().SetProtocols(c.RemotePeer())
-	h.ids.IdentifyConn(c)
+	h.Ids.IdentifyConn(c)
 }
 
 // newStreamHandler is the remote-opened stream handler for inet.Network
@@ -260,7 +264,7 @@ func (h *BasicHost) newStreamHandler(s inet.Stream) {
 // PushIdentify pushes an identify update through the identify push protocol
 // Warning: this interface is unstable and may disappear in the future.
 func (h *BasicHost) PushIdentify() {
-	h.ids.Push()
+	h.Ids.Push()
 }
 
 // ID returns the (local) peer.ID associated with this Host
@@ -285,7 +289,7 @@ func (h *BasicHost) Mux() *msmux.MultistreamMuxer {
 
 // IDService returns
 func (h *BasicHost) IDService() *identify.IDService {
-	return h.ids
+	return h.Ids
 }
 
 // SetStreamHandler sets the protocol handler on the Host's Mux.
@@ -459,7 +463,7 @@ func (h *BasicHost) dialPeer(ctx context.Context, p peer.ID) error {
 	// identify the connection before returning.
 	done := make(chan struct{})
 	go func() {
-		h.ids.IdentifyConn(c)
+		h.Ids.IdentifyConn(c)
 		close(done)
 	}()
 
@@ -508,9 +512,9 @@ func (h *BasicHost) AllAddrs() []ma.Multiaddr {
 		log.Debug("error retrieving network interface addrs")
 	}
 	var observedAddrs []ma.Multiaddr
-	if h.ids != nil {
+	if h.Ids != nil {
 		// peer observed addresses
-		observedAddrs = h.ids.OwnObservedAddrs()
+		observedAddrs = h.Ids.OwnObservedAddrs()
 	}
 	var natAddrs []ma.Multiaddr
 	// natmgr is nil if we do not use nat option;

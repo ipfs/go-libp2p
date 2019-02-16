@@ -95,7 +95,9 @@ func (h *AutoRelayHost) background(ctx context.Context) {
 
 	for {
 		wait := autonat.AutoNATRefreshInterval
-		switch h.autonat.Status() {
+		status := h.autonat.Status()
+		h.Ids.SetNatStatus(status)
+		switch status {
 		case autonat.NATStatusUnknown:
 			wait = autonat.AutoNATRetryInterval
 		case autonat.NATStatusPublic:

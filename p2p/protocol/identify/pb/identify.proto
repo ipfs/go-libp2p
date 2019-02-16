@@ -26,4 +26,12 @@ message Identify {
 
   // protocols are the services this node is running
   repeated string protocols = 3;
+
+  enum NATStatus {
+    NATStatusUnknown = 0;
+    NATStatusPublic  = 1;
+    NATStatusPrivate = 2;
+  };
+
+  optional NATStatus natStatus = 7;
 }
