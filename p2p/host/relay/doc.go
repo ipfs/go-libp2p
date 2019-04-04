@@ -6,21 +6,22 @@ feature is dubbed `autorelay`.
 Warning: the internal interfaces are unstable.
 
 System Components:
-- AutoNATService instances -- see https://github.com/libp2p/go-libp2p-autonat-svc
-- One or more relays, instances of `RelayHost`
-- The autorelayed hosts, instances of `AutoRelayHost`.
+  - AutoNATService instances -- see https://github.com/libp2p/go-libp2p-autonat-svc
+  - One or more relays, instances of `RelayHost`
+  - The autorelayed hosts, instances of `AutoRelayHost`.
 
 How it works:
-- `AutoNATService` instances are instantiated in the
+
+- AutoNATService
+  `AutoNATService` instances are instantiated in the
   bootstrappers (or other well known publicly reachable hosts)
 
-- `RelayHost`s are constructed with
-  `libp2p.New(libp2p.EnableRelay(circuit.OptHop), libp2p.Routing(makeDHT))`.
-  They provide Relay Hop services, and advertise through the DHT
+- RelayHost
+  RelayHosts provide Relay Hop services, and advertise through the DHT
   in the `/libp2p/relay` namespace
 
-- `AutoRelayHost`s are constructed with `libp2p.New(libp2p.Routing(makeDHT))`
-  They passively discover autonat service instances and test dialability of
+- AutoRelayHost
+  AutoRelayHosts passively discover autonat service instances and test dialability of
   their listen address set through them.  When the presence of NAT is detected,
   they discover relays through the DHT, connect to some of them and begin
   advertising relay addresses.  The new set of addresses is propagated to

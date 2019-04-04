@@ -22,7 +22,9 @@ type RelayHost struct {
 	addrsF    basic.AddrsFactory
 }
 
-// New constructs a new RelayHost
+// Warning:  This function should not be used directly by clients activating
+// relay. NewRelayHost is used internally by the libp2p.New generator. To enable
+// relay, use the EnableRelay Option. https://godoc.org/github.com/libp2p/go-libp2p#EnableRelay
 func NewRelayHost(ctx context.Context, bhost *basic.BasicHost, advertise discovery.Advertiser) *RelayHost {
 	h := &RelayHost{
 		BasicHost: bhost,
