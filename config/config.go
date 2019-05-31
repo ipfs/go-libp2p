@@ -17,6 +17,7 @@ import (
 	bhost "github.com/libp2p/go-libp2p/p2p/host/basic"
 	relay "github.com/libp2p/go-libp2p/p2p/host/relay"
 	routed "github.com/libp2p/go-libp2p/p2p/host/routed"
+	pipetransport "github.com/libp2p/go-libp2p/p2p/transport/pipe"
 
 	circuit "github.com/libp2p/go-libp2p-circuit"
 	discovery "github.com/libp2p/go-libp2p-discovery"
@@ -66,6 +67,7 @@ type Config struct {
 	Reporter    metrics.Reporter
 
 	DisablePing bool
+	SelfDial    bool
 
 	Routing RoutingC
 
@@ -110,7 +112,7 @@ func (cfg *Config) NewNode(ctx context.Context) (host.Host, error) {
 	}
 
 	// TODO: Make the swarm implementation configurable.
-	swrm := swarm.NewSwarm(ctx, pid, cfg.Peerstore, cfg.Reporter)
+	swrm := swarm.NewSwarm(ctx, pid, cfg.Peerstore, cfg.Reporter, cfg.SelfDial)
 	if cfg.Filters != nil {
 		swrm.Filters = cfg.Filters
 	}
@@ -161,6 +163,10 @@ func (cfg *Config) NewNode(ctx context.Context) (host.Host, error) {
 	if err != nil {
 		h.Close()
 		return nil, err
+	}
+	if cfg.SelfDial {
+		tpt := pipetransport.New(pid, cfg.PeerKey.GetPublic(), cfg.PeerKey)
+		tpts = append(tpts, tpt)
 	}
 	for _, t := range tpts {
 		err = swrm.AddTransport(t)

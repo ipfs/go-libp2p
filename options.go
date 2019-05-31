@@ -296,6 +296,13 @@ func Routing(rt config.RoutingC) Option {
 	}
 }
 
+// EnableSelfDial will configure libp2p to support self dialing; disabled by
+// default.
+var EnableSelfDial Option = func(cfg *Config) error {
+	cfg.SelfDial = true
+	return nil
+}
+
 // NoListenAddrs will configure libp2p to not listen by default.
 //
 // This will both clear any configured listen addrs and prevent libp2p from

@@ -6,11 +6,15 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-core/protocol"
 	"github.com/libp2p/go-tcp-transport"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 func TestNewHost(t *testing.T) {
@@ -75,6 +79,117 @@ func TestInsecure(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.Close()
+}
+
+func TestPipeTransport(t *testing.T) {
+	ctx := context.Background()
+	memAddr, err := ma.NewMultiaddr("/memory/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := New(ctx, NoSecurity, EnableSelfDial, ListenAddrs(memAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := peer.AddrInfo{
+		ID:    h.ID(),
+		Addrs: []ma.Multiaddr{memAddr},
+	}
+	err = h.Connect(ctx, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	donech := make(chan struct{})
+	h.SetStreamHandler(protocol.TestingID, func(s network.Stream) {
+		n, err := s.Write([]byte{0x01, 0x02, 0x03})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 3 {
+			t.Fatalf("expected 3 bytes, wrote %d", n)
+		}
+		donech <- struct{}{}
+	})
+	streamContext, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	s, err := h.NewStream(streamContext, h.ID(), protocol.TestingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 5)
+	n, err := s.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("expected 3 bytes, wrote %d", n)
+	}
+	for i := byte(1); i < 4; i++ {
+		if buf[int(i)-1] != i {
+			t.Fatalf("bytes didn't match: %x vs %x", buf[int(i)-1], i)
+		}
+	}
+	s.Close()
+	h.Close()
+}
+
+func TestPipeTransportAcrossHosts(t *testing.T) {
+	ctx := context.Background()
+	memAddr1, err := ma.NewMultiaddr("/memory/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h1, err := New(ctx, NoSecurity, EnableSelfDial, ListenAddrs(memAddr1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	memAddr2, err := ma.NewMultiaddr("/memory/2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2, err := New(ctx, NoSecurity, EnableSelfDial, ListenAddrs(memAddr2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info2 := peer.AddrInfo{
+		ID:    h2.ID(),
+		Addrs: []ma.Multiaddr{memAddr2},
+	}
+	err = h1.Connect(ctx, info2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	donech := make(chan struct{})
+	h2.SetStreamHandler(protocol.TestingID, func(s network.Stream) {
+		n, err := s.Write([]byte{0x01, 0x02, 0x03})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 3 {
+			t.Fatalf("expected 3 bytes, wrote %d", n)
+		}
+		donech <- struct{}{}
+	})
+	streamContext, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	s, err := h1.NewStream(streamContext, h2.ID(), protocol.TestingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 5)
+	n, err := s.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("expected 3 bytes, wrote %d", n)
+	}
+	for i := byte(1); i < 4; i++ {
+		if buf[int(i)-1] != i {
+			t.Fatalf("bytes didn't match: %x vs %x", buf[int(i)-1], i)
+		}
+	}
+	s.Close()
 }
 
 func TestDefaultListenAddrs(t *testing.T) {
