@@ -76,7 +76,7 @@ func NewMdnsService(ctx context.Context, peerhost host.Host, interval time.Durat
 
 	addrs, err := getDialableListenAddrs(peerhost)
 	if err != nil {
-		log.Warning(err)
+		log.Warn(err)
 	} else {
 		port = addrs[0].Port
 		for _, a := range addrs {
@@ -159,7 +159,7 @@ func (m *mdnsService) handleEntry(e *mdns.ServiceEntry) {
 	log.Debugf("Handling MDNS entry: %s:%d %s", e.AddrV4, e.Port, e.Info)
 	mpeer, err := peer.IDB58Decode(e.Info)
 	if err != nil {
-		log.Warning("Error parsing peer ID from mdns entry: ", err)
+		log.Warn("Error parsing peer ID from mdns entry: ", err)
 		return
 	}
 
@@ -173,7 +173,7 @@ func (m *mdnsService) handleEntry(e *mdns.ServiceEntry) {
 		Port: e.Port,
 	})
 	if err != nil {
-		log.Warning("Error parsing multiaddr from mdns entry: ", err)
+		log.Warn("Error parsing multiaddr from mdns entry: ", err)
 		return
 	}
 

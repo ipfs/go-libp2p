@@ -131,7 +131,7 @@ func logRoutingErrDifferentPeers(ctx context.Context, wanted, got peer.ID, err e
 	lm["error"] = err
 	lm["wantedPeer"] = func() interface{} { return wanted.Pretty() }
 	lm["gotPeer"] = func() interface{} { return got.Pretty() }
-	log.Event(ctx, "routingError", lm)
+	log.Info("routingError", lm)
 }
 
 func (rh *RoutedHost) ID() peer.ID {

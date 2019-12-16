@@ -115,14 +115,14 @@ func NewIDService(ctx context.Context, h host.Host, opts ...Option) *IDService {
 	var err error
 	s.subscription, err = h.EventBus().Subscribe(&event.EvtLocalProtocolsUpdated{}, eventbus.BufSize(128))
 	if err != nil {
-		log.Warningf("identify service not subscribed to local protocol handlers updates; err: %s", err)
+		log.Warnf("identify service not subscribed to local protocol handlers updates; err: %s", err)
 	} else {
 		go s.handleEvents()
 	}
 
 	s.emitters.evtPeerProtocolsUpdated, err = h.EventBus().Emitter(&event.EvtPeerProtocolsUpdated{})
 	if err != nil {
-		log.Warningf("identify service not emitting peer protocol updates; err: %s", err)
+		log.Warnf("identify service not emitting peer protocol updates; err: %s", err)
 	}
 
 	h.SetStreamHandler(ID, s.requestHandler)
@@ -184,8 +184,7 @@ func (ids *IDService) IdentifyConn(c network.Conn) {
 
 	s, err := c.NewStream()
 	if err != nil {
-		log.Debugf("error opening initial stream for %s: %s", ID, err)
-		log.Event(context.TODO(), "IdentifyOpenFailed", c.RemotePeer())
+		log.Infow("IdentifyOpenFailed", "remote_peer", c.RemotePeer())
 		c.Close()
 		return
 	}
@@ -194,7 +193,7 @@ func (ids *IDService) IdentifyConn(c network.Conn) {
 
 	// ok give the response to our handler.
 	if err := msmux.SelectProtoOrFail(ID, s); err != nil {
-		log.Event(context.TODO(), "IdentifyOpenFailed", c.RemotePeer(), logging.Metadata{"error": err})
+		log.Infow("IdentifyOpenFailed", "remote_peer", c.RemotePeer(), "error", err)
 		s.Reset()
 		return
 	}
@@ -220,7 +219,7 @@ func (ids *IDService) responseHandler(s network.Stream) {
 	r := ggio.NewDelimitedReader(s, 2048)
 	mes := pb.Identify{}
 	if err := r.ReadMsg(&mes); err != nil {
-		log.Warning("error reading identify message: ", err)
+		log.Warn("error reading identify message: ", err)
 		s.Reset()
 		return
 	}
@@ -413,7 +412,7 @@ func (ids *IDService) consumeReceivedPubKey(c network.Conn, kb []byte) {
 
 	newKey, err := ic.UnmarshalPublicKey(kb)
 	if err != nil {
-		log.Warningf("%s cannot unmarshal key from remote peer: %s, %s", lp, rp, err)
+		log.Warnf("%s cannot unmarshal key from remote peer: %s, %s", lp, rp, err)
 		return
 	}
 

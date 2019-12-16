@@ -262,7 +262,7 @@ func (h *BasicHost) newStreamHandler(s network.Stream) {
 		if err == io.EOF {
 			logf := log.Debugf
 			if took > time.Second*10 {
-				logf = log.Warningf
+				logf = log.Warnf
 			}
 			logf("protocol EOF: %s (took %s)", s.Conn().RemotePeer(), took)
 		} else {

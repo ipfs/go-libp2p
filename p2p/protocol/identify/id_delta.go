@@ -20,7 +20,7 @@ func (ids *IDService) deltaHandler(s network.Stream) {
 	r := ggio.NewDelimitedReader(s, 2048)
 	mes := pb.Identify{}
 	if err := r.ReadMsg(&mes); err != nil {
-		log.Warning("error reading identify message: ", err)
+		log.Warn("error reading identify message: ", err)
 		s.Reset()
 		return
 	}
@@ -35,7 +35,7 @@ func (ids *IDService) deltaHandler(s network.Stream) {
 
 	p := s.Conn().RemotePeer()
 	if err := ids.consumeDelta(p, delta); err != nil {
-		log.Warningf("delta update from peer %s failed: %s", p, err)
+		log.Warnf("delta update from peer %s failed: %s", p, err)
 	}
 }
 
@@ -52,7 +52,7 @@ func (ids *IDService) fireProtocolDelta(evt event.EvtLocalProtocolsUpdated) {
 		c := s.Conn()
 		err := ggio.NewDelimitedWriter(s).WriteMsg(&mes)
 		if err != nil {
-			log.Warningf("%s error while sending delta update to %s: %s", IDDelta, c.RemotePeer(), c.RemoteMultiaddr())
+			log.Warnf("%s error while sending delta update to %s: %s", IDDelta, c.RemotePeer(), c.RemoteMultiaddr())
 			return
 		}
 		log.Debugf("%s sent delta update to %s: %s", IDDelta, c.RemotePeer(), c.RemoteMultiaddr())
