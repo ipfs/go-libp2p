@@ -146,6 +146,7 @@ func NewHost(ctx context.Context, net network.Network, opts *HostOpts) (*BasicHo
 		return nil, err
 	}
 
+
 	h.proc = goprocessctx.WithContextAndTeardown(ctx, func() error {
 		if h.natmgr != nil {
 			h.natmgr.Close()

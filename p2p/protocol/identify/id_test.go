@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/libp2p/go-eventbus"
-	libp2p "github.com/libp2p/go-libp2p"
 	ic "github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/helpers"
@@ -19,27 +17,42 @@ import (
 	"github.com/libp2p/go-libp2p-core/protocol"
 	coretest "github.com/libp2p/go-libp2p-core/test"
 
+	"github.com/libp2p/go-eventbus"
+	libp2p "github.com/libp2p/go-libp2p"
 	blhost "github.com/libp2p/go-libp2p-blankhost"
 	swarmt "github.com/libp2p/go-libp2p-swarm/testing"
 	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
 
 	"github.com/libp2p/go-libp2p-peerstore/pstoremem"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
+
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/stretchr/testify/require"
 )
 
 func subtestIDService(t *testing.T) {
+	testProto1 := protocol.ID("1")
+	testProto2 := protocol.ID("2")
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	h1 := blhost.NewBlankHost(swarmt.GenSwarm(t, ctx))
 	h2 := blhost.NewBlankHost(swarmt.GenSwarm(t, ctx))
 
+	h2.SetStreamHandler(testProto1, func(s network.Stream) {})
+	h2.SetStreamHandler(testProto2, func(s network.Stream) {})
+
 	h1p := h1.ID()
 	h2p := h2.ID()
 
 	ids1 := identify.NewIDService(ctx, h1)
 	ids2 := identify.NewIDService(ctx, h2)
+
+	// create subscription for peer protocol update event
+	protoSub, err := ids1.Host.EventBus().Subscribe(new(event.EvtPeerProtocolsUpdated))
+	defer protoSub.Close()
+	require.NoError(t, err)
 
 	testKnowsAddrs(t, h1, h2p, []ma.Multiaddr{}) // nothing
 	testKnowsAddrs(t, h2, h1p, []ma.Multiaddr{}) // nothing
@@ -116,6 +129,25 @@ func subtestIDService(t *testing.T) {
 	case <-sub.Out():
 	case <-time.After(5 * time.Second):
 		t.Fatalf("expected EvtPeerIdentificationCompleted event within 5 seconds; none received")
+	}
+
+	select {
+	case evt := <-protoSub.Out():
+		e := evt.(event.EvtPeerProtocolsUpdated)
+		require.Equal(t, h2p, e.Peer)
+		require.Contains(t, e.Added, testProto1)
+		require.Contains(t, e.Added, testProto2)
+
+	case <-time.After(5 * time.Second):
+		t.Fatal("failed to get peer protocols update event")
+	}
+
+	// there should be no more protocol events
+	select {
+	case _ = <-protoSub.Out():
+		t.Fatal("should not get peer protocols update event")
+
+	case <-time.After(2 * time.Second):
 	}
 }
 

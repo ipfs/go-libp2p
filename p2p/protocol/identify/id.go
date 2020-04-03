@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/libp2p/go-eventbus"
 	ic "github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/helpers"
@@ -17,6 +16,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/peerstore"
 	"github.com/libp2p/go-libp2p-core/protocol"
 
+	"github.com/libp2p/go-eventbus"
 	pb "github.com/libp2p/go-libp2p/p2p/protocol/identify/pb"
 
 	ggio "github.com/gogo/protobuf/io"
@@ -197,11 +197,29 @@ func (ids *IDService) IdentifyConn(c network.Conn) {
 		delete(ids.currid, c)
 		ids.currmu.Unlock()
 
-		// emit the appropriate event.
-		if p := c.RemotePeer(); err == nil {
-			ids.emitters.evtPeerIdentificationCompleted.Emit(event.EvtPeerIdentificationCompleted{Peer: p})
+		// emit the appropriate events.
+		rp := c.RemotePeer()
+		if err == nil {
+			// emit Identify Completed
+			ids.emitters.evtPeerIdentificationCompleted.Emit(event.EvtPeerIdentificationCompleted{Peer: rp})
+
+			// emit Peer Protocols Updated
+			peerProtocols, err := ids.Host.Peerstore().GetProtocols(rp)
+			if err != nil {
+				log.Errorf("failed to fetch protocols from the peerstore for peer=%s, err=%s", rp.String(), err)
+				return
+			}
+
+			// TODO This can race with the ID Delta if the peer immediately changes it's protocols after connecting
+			// The long term solution is to fix https://github.com/libp2p/go-libp2p/issues/823
+			// But, in the long term, we are all dead.
+			ids.emitters.evtPeerProtocolsUpdated.Emit(event.EvtPeerProtocolsUpdated{
+				Peer:  c.RemotePeer(),
+				Added: protocol.ConvertFromStrings(peerProtocols),
+			})
+
 		} else {
-			ids.emitters.evtPeerIdentificationFailed.Emit(event.EvtPeerIdentificationFailed{Peer: p, Reason: err})
+			ids.emitters.evtPeerIdentificationFailed.Emit(event.EvtPeerIdentificationFailed{Peer: rp, Reason: err})
 		}
 	}()
 
