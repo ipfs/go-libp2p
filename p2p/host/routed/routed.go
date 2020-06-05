@@ -8,6 +8,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/connmgr"
 	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/introspection"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/peerstore"
@@ -21,6 +22,8 @@ import (
 )
 
 var log = logging.Logger("routedhost")
+
+var _ host.IntrospectableHost = (*RoutedHost)(nil)
 
 // AddressTTL is the expiry time for our addresses.
 // We expire them quickly.
@@ -132,6 +135,22 @@ func logRoutingErrDifferentPeers(ctx context.Context, wanted, got peer.ID, err e
 	lm["wantedPeer"] = func() interface{} { return wanted.Pretty() }
 	lm["gotPeer"] = func() interface{} { return got.Pretty() }
 	log.Event(ctx, "routingError", lm)
+}
+
+func (h *RoutedHost) Introspector() introspection.Introspector {
+	i, ok := h.host.(host.IntrospectableHost)
+	if !ok {
+		return nil
+	}
+	return i.Introspector()
+}
+
+func (h *RoutedHost) IntrospectionEndpoint() introspection.Endpoint {
+	i, ok := h.host.(host.IntrospectableHost)
+	if !ok {
+		return nil
+	}
+	return i.IntrospectionEndpoint()
 }
 
 func (rh *RoutedHost) ID() peer.ID {

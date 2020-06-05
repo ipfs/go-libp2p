@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,12 +15,15 @@ import (
 	protocol "github.com/libp2p/go-libp2p-core/protocol"
 )
 
+var streamCounter int64
+
 // stream implements network.Stream
 type stream struct {
 	notifLk sync.Mutex
 
 	rstream *stream
 	conn    *conn
+	id      int64
 
 	write     *io.PipeWriter
 	read      *io.PipeReader
@@ -57,6 +61,7 @@ func newStream(w *io.PipeWriter, r *io.PipeReader, dir network.Direction) *strea
 	s := &stream{
 		read:      r,
 		write:     w,
+		id:        atomic.AddInt64(&streamCounter, 1),
 		reset:     make(chan struct{}, 1),
 		close:     make(chan struct{}, 1),
 		closed:    make(chan struct{}),
@@ -84,6 +89,10 @@ func (s *stream) Write(p []byte) (n int, err error) {
 	case s.toDeliver <- &transportObject{msg: cpy, arrivalTime: t}:
 	}
 	return len(p), nil
+}
+
+func (s *stream) ID() string {
+	return strconv.FormatInt(s.id, 10)
 }
 
 func (s *stream) Protocol() protocol.ID {

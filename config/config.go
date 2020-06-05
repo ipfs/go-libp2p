@@ -9,6 +9,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/connmgr"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/introspection"
 	"github.com/libp2p/go-libp2p-core/metrics"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -43,6 +44,13 @@ type AddrsFactory = bhost.AddrsFactory
 type NATManagerC func(network.Network) bhost.NATManager
 
 type RoutingC func(host.Host) (routing.PeerRouting, error)
+
+// IntrospectorC represents an introspector constructor.
+type IntrospectorC func(host.Host, metrics.Reporter) (introspection.Introspector, error)
+
+// IntrospectionEndpointC is a type that represents an introspect.Endpoint
+// constructor.
+type IntrospectionEndpointC func(introspection.Introspector) (introspection.Endpoint, error)
 
 // AutoNATConfig defines the AutoNAT behavior for the libp2p host.
 type AutoNATConfig struct {
@@ -92,6 +100,9 @@ type Config struct {
 	EnableAutoRelay bool
 	AutoNATConfig
 	StaticRelays []peer.AddrInfo
+
+	Introspector          IntrospectorC
+	IntrospectionEndpoint IntrospectionEndpointC
 }
 
 func (cfg *Config) makeSwarm(ctx context.Context) (*swarm.Swarm, error) {
@@ -185,13 +196,15 @@ func (cfg *Config) NewNode(ctx context.Context) (host.Host, error) {
 		return nil, err
 	}
 
-	h, err := bhost.NewHost(ctx, swrm, &bhost.HostOpts{
+	opts := &bhost.HostOpts{
 		ConnManager:  cfg.ConnManager,
 		AddrsFactory: cfg.AddrsFactory,
 		NATManager:   cfg.NATManager,
 		EnablePing:   !cfg.DisablePing,
 		UserAgent:    cfg.UserAgent,
-	})
+	}
+
+	h, err := bhost.NewHost(ctx, swrm, opts)
 
 	if err != nil {
 		swrm.Close()
@@ -338,6 +351,30 @@ func (cfg *Config) NewNode(ctx context.Context) (host.Host, error) {
 	if _, err = autonat.New(ctx, h, autonatOpts...); err != nil {
 		h.Close()
 		return nil, fmt.Errorf("cannot enable autorelay; autonat failed to start: %v", err)
+	}
+
+	if cfg.Introspector != nil {
+		var (
+			introspector introspection.Introspector
+			endpoint     introspection.Endpoint
+			err          error
+		)
+
+		if introspector, err = cfg.Introspector(h, cfg.Reporter); err != nil {
+			h.Close()
+			return nil, fmt.Errorf("failed to create introspector: %w", err)
+		}
+
+		if cfg.IntrospectionEndpoint != nil {
+			if endpoint, err = cfg.IntrospectionEndpoint(introspector); err != nil {
+				h.Close()
+				return nil, fmt.Errorf("failed to create introspection endpoint: %w", err)
+			}
+		}
+		if err := h.SetIntrospection(introspector, endpoint); err != nil {
+			h.Close()
+			return nil, fmt.Errorf("failed to set introspection objects on host: %w", err)
+		}
 	}
 
 	// start the host background tasks

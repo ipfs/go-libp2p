@@ -13,17 +13,19 @@ import (
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/introspection"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/peerstore"
 	"github.com/libp2p/go-libp2p-core/protocol"
 	"github.com/libp2p/go-libp2p-core/record"
 
+	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
+
 	addrutil "github.com/libp2p/go-addr-util"
 	"github.com/libp2p/go-eventbus"
 	inat "github.com/libp2p/go-libp2p-nat"
-	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
-	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/libp2p/go-netroute"
 
 	logging "github.com/ipfs/go-log"
@@ -38,6 +40,8 @@ import (
 // The maximum number of address resolution steps we'll perform for a single
 // peer (for all addresses).
 const maxAddressResolution = 32
+
+var _ host.IntrospectableHost = (*BasicHost)(nil)
 
 // addrChangeTickrInterval is the interval between two address change ticks.
 var addrChangeTickrInterval = 5 * time.Second
@@ -103,6 +107,9 @@ type BasicHost struct {
 
 	addrChangeChan chan struct{}
 
+	introspector          introspection.Introspector
+	introspectionEndpoint introspection.Endpoint
+
 	lipMu         sync.RWMutex
 	localIPv4Addr ma.Multiaddr
 	localIPv6Addr ma.Multiaddr
@@ -146,6 +153,14 @@ type HostOpts struct {
 	// UserAgent sets the user-agent for the host. Defaults to ClientVersion.
 	UserAgent string
 
+	// Introspector is used by host subsystems to register themselves as metrics
+	// providers and fetch the current state.
+	Introspector introspection.Introspector
+
+	// IntrospectionEndpoint is the introspect endpoint through which
+	// introspect data is served to clients.
+	IntrospectionEndpoint introspection.Endpoint
+
 	// DisableSignedPeerRecord disables the generation of Signed Peer Records on this host.
 	DisableSignedPeerRecord bool
 }
@@ -161,6 +176,7 @@ func NewHost(ctx context.Context, n network.Network, opts *HostOpts) (*BasicHost
 		AddrsFactory:            DefaultAddrsFactory,
 		maResolver:              madns.DefaultResolver,
 		eventbus:                eventbus.NewBus(),
+		introspector:            opts.Introspector,
 		addrChangeChan:          make(chan struct{}, 1),
 		ctx:                     hostCtx,
 		ctxCancel:               cancel,
@@ -204,6 +220,7 @@ func NewHost(ctx context.Context, n network.Network, opts *HostOpts) (*BasicHost
 		h.mux = opts.MultistreamMuxer
 	}
 
+	// Start ID Service
 	// we can't set this as a default above because it depends on the *BasicHost.
 	if h.disableSignedPeerRecord {
 		h.ids = identify.NewIDService(h, identify.UserAgent(opts.UserAgent), identify.DisableSignedPeerRecord())
@@ -251,6 +268,33 @@ func NewHost(ctx context.Context, n network.Network, opts *HostOpts) (*BasicHost
 	})
 
 	return h, nil
+}
+
+func (h *BasicHost) SetIntrospection(introspector introspection.Introspector, endpoint introspection.Endpoint) error {
+	if h.introspectionEndpoint != nil {
+		if err := h.introspectionEndpoint.Close(); err != nil {
+			return fmt.Errorf("failed to close existing introspection endpoint: %w", err)
+		}
+	}
+	if h.introspector != nil {
+		if err := h.introspector.Close(); err != nil {
+			return fmt.Errorf("failed to close existing introspector: %w", err)
+		}
+	}
+	h.introspector = introspector
+	h.introspectionEndpoint = endpoint
+	if h.introspectionEndpoint == nil {
+		return nil
+	}
+	return h.introspectionEndpoint.Start()
+}
+
+func (h *BasicHost) Introspector() introspection.Introspector {
+	return h.introspector
+}
+
+func (h *BasicHost) IntrospectionEndpoint() introspection.Endpoint {
+	return h.introspectionEndpoint
 }
 
 func (h *BasicHost) updateLocalIpAddr() {
@@ -933,6 +977,18 @@ func (h *BasicHost) Close() error {
 		_ = h.emitters.evtLocalProtocolsUpdated.Close()
 		_ = h.emitters.evtLocalAddrsUpdated.Close()
 		h.Network().Close()
+
+		if h.introspectionEndpoint != nil {
+			if err := h.introspectionEndpoint.Close(); err != nil {
+				log.Errorf("failed while shutting down introspection endpoint; err: %s", err)
+			}
+		}
+
+		if h.introspector != nil {
+			if err := h.introspector.Close(); err != nil {
+				log.Errorf("failed while shutting down introspectir; err: %s", err)
+			}
+		}
 
 		h.refCount.Wait()
 	})

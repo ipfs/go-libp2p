@@ -10,6 +10,7 @@ import (
 	"time"
 
 	circuit "github.com/libp2p/go-libp2p-circuit"
+
 	"github.com/libp2p/go-libp2p-core/connmgr"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/metrics"
@@ -191,6 +192,34 @@ func ConnectionManager(connman connmgr.ConnManager) Option {
 			return fmt.Errorf("cannot specify multiple connection managers")
 		}
 		cfg.ConnManager = connman
+		return nil
+	}
+}
+
+// Introspection configures the host to use the given Introspector, and the
+// supplied Introspection Endpoint.
+//
+// Example:
+//
+//  import (
+//      "github.com/libp2p/go-libp2p/introspect"
+//      "github.com/libp2p/go-libp2p/introspect/ws"
+//  )
+//
+//  host, err := libp2p.New(
+//	    libp2p.Introspection(
+//          introspect.NewDefaultIntrospector,
+//          ws.EndpointWithConfig(&ws.EndpointConfig{ListenAddrs: []string{"localhost:6061"}}),
+//      ),
+//  )
+//
+func Introspection(introspectorCtor config.IntrospectorC, endpointCtor config.IntrospectionEndpointC) Option {
+	return func(cfg *Config) error {
+		if cfg.Introspector != nil {
+			return fmt.Errorf("cannot specify multiple introspectors")
+		}
+		cfg.Introspector = introspectorCtor
+		cfg.IntrospectionEndpoint = endpointCtor
 		return nil
 	}
 }
