@@ -11,6 +11,7 @@ require (
 	github.com/ipfs/go-log v1.0.4
 	github.com/jbenet/go-cienv v0.1.0
 	github.com/jbenet/goprocess v0.1.4
+	github.com/kr/fs v0.1.0 // indirect
 	github.com/libp2p/go-addr-util v0.0.2
 	github.com/libp2p/go-conn-security-multistream v0.2.0
 	github.com/libp2p/go-eventbus v0.2.1
@@ -41,6 +42,8 @@ require (
 	github.com/multiformats/go-multistream v0.2.0
 	github.com/onsi/ginkgo v1.12.1 // indirect
 	github.com/stretchr/testify v1.6.1
+	github.com/whyrusleeping/gx v0.14.3 // indirect
+	github.com/whyrusleeping/gx-go v1.9.0 // indirect
 	github.com/whyrusleeping/mdns v0.0.0-20190826153040-b9b60ed33aa9
 	google.golang.org/protobuf v1.23.0 // indirect
 )

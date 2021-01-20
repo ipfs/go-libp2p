@@ -30,12 +30,24 @@ func TestMdnsDiscovery(t *testing.T) {
 	a := bhost.New(swarmt.GenSwarm(t, ctx))
 	b := bhost.New(swarmt.GenSwarm(t, ctx))
 
-	sa, err := NewMdnsService(ctx, a, time.Second, "someTag")
+	interval := func(opts *MdnsServiceInit) {
+		opts.Interval = time.Second
+	}
+	tag := func(opts *MdnsServiceInit) {
+		opts.Tag = "someTag"
+	}
+	// Not necessary, default value being an empty string anyway
+	ifaceName := func(opts *MdnsServiceInit) {
+		opts.IfaceName = ""
+	}
+
+	sa, err := NewMdnsService(ctx, a, interval, tag, ifaceName)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	sb, err := NewMdnsService(ctx, b, time.Second, "someTag")
+	// Here we don't add the ifaceName function
+	sb, err := NewMdnsService(ctx, b, interval, tag)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,12 +43,20 @@ type mdnsService struct {
 	host    host.Host
 	tag     string
 
+	ifaceName string
+
 	lk       sync.Mutex
 	notifees []Notifee
 	interval time.Duration
 }
 
-func getDialableListenAddrs(ph host.Host) ([]*net.TCPAddr, error) {
+type MdnsServiceInit struct {
+	Interval  time.Duration // time between mDNS requests. Default: 30 seconds
+	IfaceName string        // network interface name, such as "wlan0". Empty string "" is the default to listen to any  TCP interface.
+	Tag       string        // peers find themselves using on this common tag. Default is Tag = "_ipfs-discovery._udp"
+}
+
+func getDialableListenAddrs(ph host.Host, iface *net.Interface) ([]*net.TCPAddr, error) {
 	var out []*net.TCPAddr
 	addrs, err := ph.Network().InterfaceListenAddresses()
 	if err != nil {
@@ -58,9 +67,27 @@ func getDialableListenAddrs(ph host.Host) ([]*net.TCPAddr, error) {
 		if err != nil {
 			continue
 		}
-		tcp, ok := na.(*net.TCPAddr)
-		if ok {
-			out = append(out, tcp)
+
+		// if `iface` is specified, use address from `iface`
+		// otherwise get any TCP-capable address.
+		if iface != nil {
+			ips, err := iface.Addrs()
+			if err != nil {
+				return nil, err
+			}
+
+			for _, i := range ips {
+				if strings.Contains(na.String(), strings.Split(i.String(), "/")[0]) {
+					if tcp, ok := na.(*net.TCPAddr); ok {
+						out = append(out, tcp)
+						break
+					}
+				}
+			}
+		} else {
+			if tcp, ok := na.(*net.TCPAddr); ok {
+				out = append(out, tcp)
+			}
 		}
 	}
 	if len(out) == 0 {
@@ -69,12 +96,27 @@ func getDialableListenAddrs(ph host.Host) ([]*net.TCPAddr, error) {
 	return out, nil
 }
 
-func NewMdnsService(ctx context.Context, peerhost host.Host, interval time.Duration, serviceTag string) (Service, error) {
-
+func NewMdnsService(ctx context.Context, peerhost host.Host, options ...func(*MdnsServiceInit)) (Service, error) {
 	var ipaddrs []net.IP
 	port := 4001
 
-	addrs, err := getDialableListenAddrs(peerhost)
+	// Init options with default and call user-defined functions to override the default values
+	opts := MdnsServiceInit{Interval: time.Duration(30) * time.Second, IfaceName: "", Tag: ServiceTag}
+	for _, option := range options {
+		option(&opts)
+	}
+
+	// Get interface from name passed in options if any
+	var iface *net.Interface
+	if opts.IfaceName != "" {
+		var err error
+		iface, err = net.InterfaceByName(opts.IfaceName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	addrs, err := getDialableListenAddrs(peerhost, iface)
 	if err != nil {
 		log.Warning(err)
 	} else {
@@ -87,26 +129,24 @@ func NewMdnsService(ctx context.Context, peerhost host.Host, interval time.Durat
 	myid := peerhost.ID().Pretty()
 
 	info := []string{myid}
-	if serviceTag == "" {
-		serviceTag = ServiceTag
-	}
-	service, err := mdns.NewMDNSService(myid, serviceTag, "", "", port, ipaddrs, info)
+	service, err := mdns.NewMDNSService(myid, opts.Tag, "", "", port, ipaddrs, info)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the mDNS server, defer shutdown
-	server, err := mdns.NewServer(&mdns.Config{Zone: service})
+	server, err := mdns.NewServer(&mdns.Config{Zone: service, Iface: iface})
 	if err != nil {
 		return nil, err
 	}
 
 	s := &mdnsService{
-		server:   server,
-		service:  service,
-		host:     peerhost,
-		interval: interval,
-		tag:      serviceTag,
+		server:    server,
+		service:   service,
+		host:      peerhost,
+		interval:  opts.Interval,
+		tag:       opts.Tag,
+		ifaceName: opts.IfaceName,
 	}
 
 	go s.pollForEntries(ctx)
@@ -131,18 +171,34 @@ func (m *mdnsService) pollForEntries(ctx context.Context) {
 			}
 		}()
 
-		log.Debug("starting mdns query")
-		qp := &mdns.QueryParam{
-			Domain:  "local",
-			Entries: entriesCh,
-			Service: m.tag,
-			Timeout: time.Second * 5,
+		// get interface from name, if any, and verify the interface is up before sending a new query
+		var iface *net.Interface
+		var err error
+		if m.ifaceName != "" {
+			iface, err = net.InterfaceByName(m.ifaceName)
+			if err != nil {
+				log.Error("Cannot find interface: ", err)
+			} else if iface != nil && (iface.Flags&net.FlagUp) != 0 && (iface.Flags&net.FlagMulticast) != 0 && (iface.Flags&net.FlagLoopback) == 0 {
+				log.Debug("Starting mdns query on interface ", m.ifaceName)
+			} else {
+				log.Warn("Interface ", m.ifaceName, " is either down or loopback: ", iface.Flags)
+				iface = nil
+			}
 		}
 
-		err := mdns.Query(qp)
+		qp := &mdns.QueryParam{
+			Domain:    "local",
+			Entries:   entriesCh,
+			Service:   m.tag,
+			Timeout:   time.Second * 5,
+			Interface: iface,
+		}
+
+		err = mdns.Query(qp)
 		if err != nil {
 			log.Warnw("mdns lookup error", "error", err)
 		}
+
 		close(entriesCh)
 		log.Debug("mdns query complete")
 
