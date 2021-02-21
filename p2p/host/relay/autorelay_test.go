@@ -3,7 +3,6 @@ package relay_test
 import (
 	"context"
 	"net"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,9 +10,10 @@ import (
 	cienv "github.com/jbenet/go-cienv"
 	libp2p "github.com/libp2p/go-libp2p"
 	relay "github.com/libp2p/go-libp2p/p2p/host/relay"
+	"github.com/stretchr/testify/require"
 
 	cid "github.com/ipfs/go-cid"
-	circuit "github.com/libp2p/go-libp2p-circuit"
+	circuitv2 "github.com/libp2p/go-libp2p-circuit/v2/relay"
 	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
@@ -133,26 +133,26 @@ func TestAutoRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// announce dns addrs because filter out private addresses from relays,
-	// and we consider dns addresses "public".
-	_, err = libp2p.New(ctx,
-		libp2p.EnableRelay(circuit.OptHop),
-		libp2p.EnableAutoRelay(),
+
+	h2, err := libp2p.New(ctx,
+		libp2p.EnableRelay(),
 		libp2p.Routing(makeRouting),
-		libp2p.AddrsFactory(func(addrs []ma.Multiaddr) []ma.Multiaddr {
-			for i, addr := range addrs {
-				saddr := addr.String()
-				if strings.HasPrefix(saddr, "/ip4/127.0.0.1/") {
-					addrNoIP := strings.TrimPrefix(saddr, "/ip4/127.0.0.1")
-					addrs[i] = ma.StringCast("/dns4/localhost" + addrNoIP)
-				}
-			}
-			return addrs
-		}))
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h3, err := libp2p.New(ctx, libp2p.EnableRelay(), libp2p.EnableAutoRelay(), libp2p.Routing(makeRouting))
+	r, err := circuitv2.New(h2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	rinfo := peer.AddrInfo{
+		ID:    h2.ID(),
+		Addrs: h2.Addrs(),
+	}
+	h3, err := libp2p.New(ctx, libp2p.EnableRelay(), libp2p.EnableAutoRelay(), libp2p.Routing(makeRouting),
+		libp2p.StaticRelays([]peer.AddrInfo{rinfo}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestAutoRelay(t *testing.T) {
 
 	// verify that we don't advertise relay addrs initially
 	for _, addr := range h3.Addrs() {
-		_, err := addr.ValueForProtocol(circuit.P_CIRCUIT)
+		_, err := addr.ValueForProtocol(ma.P_CIRCUIT)
 		if err == nil {
 			t.Fatal("relay addr advertised before auto detection")
 		}
@@ -189,7 +189,7 @@ func TestAutoRelay(t *testing.T) {
 			t.Fatal("unspecific relay addr advertised")
 		}
 
-		_, err := addr.ValueForProtocol(circuit.P_CIRCUIT)
+		_, err := addr.ValueForProtocol(ma.P_CIRCUIT)
 		if err == nil {
 			haveRelay = true
 		}
@@ -202,7 +202,7 @@ func TestAutoRelay(t *testing.T) {
 	// verify that we can connect through the relay
 	var raddrs []ma.Multiaddr
 	for _, addr := range h3.Addrs() {
-		_, err := addr.ValueForProtocol(circuit.P_CIRCUIT)
+		_, err := addr.ValueForProtocol(ma.P_CIRCUIT)
 		if err == nil {
 			raddrs = append(raddrs, addr)
 		}
@@ -220,7 +220,7 @@ func TestAutoRelay(t *testing.T) {
 			t.Fatal("unspecific relay addr advertised")
 		}
 
-		_, err := addr.ValueForProtocol(circuit.P_CIRCUIT)
+		_, err := addr.ValueForProtocol(ma.P_CIRCUIT)
 		if err == nil {
 			haveRelay = true
 		}
@@ -229,4 +229,88 @@ func TestAutoRelay(t *testing.T) {
 	if !haveRelay {
 		t.Fatal("No relay addrs pushed")
 	}
+}
+
+func TestReservationRefresh(t *testing.T) {
+	mttl := relay.MinTTLRefresh
+	mrefresh := relay.ReserveRefreshInterval
+
+	relay.MinTTLRefresh = 50 * time.Millisecond
+	relay.ReserveRefreshInterval = 100 * time.Millisecond
+	defer func() {
+		relay.MinTTLRefresh = mttl
+		relay.ReserveRefreshInterval = mrefresh
+	}()
+
+	manet.Private4 = []*net.IPNet{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h1, err := libp2p.New(ctx, libp2p.EnableRelay())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h2, err := libp2p.New(ctx,
+		libp2p.EnableRelay(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := circuitv2.New(h2, circuitv2.WithLimit(&circuitv2.RelayLimit{
+		Duration: 200 * time.Millisecond,
+		Data:     1 << 17,
+	}))
+	require.NoError(t, err)
+	defer r.Close()
+
+	rinfo := peer.AddrInfo{
+		ID:    h2.ID(),
+		Addrs: h2.Addrs(),
+	}
+	h3, err := libp2p.New(ctx, libp2p.EnableRelay(), libp2p.EnableAutoRelay(),
+		libp2p.StaticRelays([]peer.AddrInfo{rinfo}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h4, err := libp2p.New(ctx, libp2p.EnableRelay())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// connect to AutoNAT, have it resolve to private.
+	connect(t, h1, h3)
+	time.Sleep(300 * time.Millisecond)
+	privEmitter, _ := h3.EventBus().Emitter(new(event.EvtLocalReachabilityChanged))
+	privEmitter.Emit(event.EvtLocalReachabilityChanged{Reachability: network.ReachabilityPrivate})
+	// Wait for detection to do its magic
+	time.Sleep(3000 * time.Millisecond)
+
+	// verify that we have pushed relay addrs to connected peers
+	haveRelay := false
+	for _, addr := range h1.Peerstore().Addrs(h3.ID()) {
+		_, err := addr.ValueForProtocol(ma.P_CIRCUIT)
+		if err == nil {
+			haveRelay = true
+		}
+	}
+	if !haveRelay {
+		t.Fatal("No relay addrs pushed")
+	}
+
+	// sleep for 1 seconds
+	// verify we can still connect via  a relay
+	// this is ONLY possible if fresh is working.
+	time.Sleep(1 * time.Second)
+	var raddrs []ma.Multiaddr
+	for _, addr := range h3.Addrs() {
+		_, err := addr.ValueForProtocol(ma.P_CIRCUIT)
+		if err == nil {
+			raddrs = append(raddrs, addr)
+		}
+	}
+
+	err = h4.Connect(ctx, peer.AddrInfo{ID: h3.ID(), Addrs: raddrs})
+	require.NoError(t, err)
 }

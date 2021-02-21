@@ -25,8 +25,7 @@ import (
 
 	autonat "github.com/libp2p/go-libp2p-autonat"
 	blankhost "github.com/libp2p/go-libp2p-blankhost"
-	circuit "github.com/libp2p/go-libp2p-circuit"
-	discovery "github.com/libp2p/go-libp2p-discovery"
+	circuitv2 "github.com/libp2p/go-libp2p-circuit/v2/client"
 	swarm "github.com/libp2p/go-libp2p-swarm"
 	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
 
@@ -75,7 +74,6 @@ type Config struct {
 
 	RelayCustom bool
 	Relay       bool
-	RelayOpts   []circuit.RelayOpt
 
 	ListenAddrs     []ma.Multiaddr
 	AddrsFactory    bhost.AddrsFactory
@@ -169,7 +167,7 @@ func (cfg *Config) addTransports(ctx context.Context, h host.Host) (err error) {
 	}
 
 	if cfg.Relay {
-		err := circuit.AddRelayTransport(ctx, h, upgrader, cfg.RelayOpts...)
+		err := circuitv2.AddTransport(ctx, h, upgrader)
 		if err != nil {
 			h.Close()
 			return err
@@ -238,7 +236,7 @@ func (cfg *Config) NewNode(ctx context.Context) (host.Host, error) {
 		return nil, err
 	}
 
-	// Configure routing and autorelay
+	// Configure routing
 	var router routing.PeerRouting
 	if cfg.Routing != nil {
 		router, err = cfg.Routing(h)
@@ -248,6 +246,7 @@ func (cfg *Config) NewNode(ctx context.Context) (host.Host, error) {
 		}
 	}
 
+	// Configure AutoRelay
 	// Note: h.AddrsFactory may be changed by AutoRelay, but non-relay version is
 	// used by AutoNAT below.
 	addrF := h.AddrsFactory
@@ -257,36 +256,10 @@ func (cfg *Config) NewNode(ctx context.Context) (host.Host, error) {
 			return nil, fmt.Errorf("cannot enable autorelay; relay is not enabled")
 		}
 
-		hop := false
-		for _, opt := range cfg.RelayOpts {
-			if opt == circuit.OptHop {
-				hop = true
-				break
-			}
-		}
-
-		if !hop && len(cfg.StaticRelays) > 0 {
+		if len(cfg.StaticRelays) > 0 {
 			_ = relay.NewAutoRelay(ctx, h, nil, router, cfg.StaticRelays)
 		} else {
-			if router == nil {
-				h.Close()
-				return nil, fmt.Errorf("cannot enable autorelay; no routing for discovery")
-			}
-
-			crouter, ok := router.(routing.ContentRouting)
-			if !ok {
-				h.Close()
-				return nil, fmt.Errorf("cannot enable autorelay; no suitable routing for discovery")
-			}
-
-			discovery := discovery.NewRoutingDiscovery(crouter)
-
-			if hop {
-				// advertise ourselves
-				relay.Advertise(ctx, discovery)
-			} else {
-				_ = relay.NewAutoRelay(ctx, h, discovery, router, cfg.StaticRelays)
-			}
+			return nil, errors.New("need to configure v2 Relays to use for AutoRelay")
 		}
 	}
 

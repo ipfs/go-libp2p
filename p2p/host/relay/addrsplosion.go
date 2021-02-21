@@ -14,10 +14,6 @@ func cleanupAddressSet(addrs []ma.Multiaddr) []ma.Multiaddr {
 	var public, private []ma.Multiaddr
 
 	for _, a := range addrs {
-		if isRelayAddr(a) {
-			continue
-		}
-
 		if manet.IsPublicAddr(a) || isDNSAddr(a) {
 			public = append(public, a)
 			continue

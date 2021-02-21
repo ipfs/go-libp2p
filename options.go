@@ -9,7 +9,6 @@ import (
 	"net"
 	"time"
 
-	circuit "github.com/libp2p/go-libp2p-circuit"
 	"github.com/libp2p/go-libp2p-core/connmgr"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/metrics"
@@ -206,22 +205,19 @@ func AddrsFactory(factory config.AddrsFactory) Option {
 	}
 }
 
-// EnableRelay configures libp2p to enable the relay transport with
-// configuration options. By default, this option only configures libp2p to
-// accept inbound connections from relays and make outbound connections
-// _through_ relays when requested by the remote peer. (default: enabled)
-//
-// To _act_ as a relay, pass the circuit.OptHop option.
-func EnableRelay(options ...circuit.RelayOpt) Option {
+// EnableRelay configures libp2p to enable the v2 Relay Transport.
+// It enables libp2p to accept inbound connections from v1 & v2 Relays and make outbound connections
+// _through_ v1 & v2 Relays when requested by the remote peer. (default: enabled)
+// Please see the docs in `go-libp2p-circuit/v2/` for more details.
+func EnableRelay() Option {
 	return func(cfg *Config) error {
 		cfg.RelayCustom = true
 		cfg.Relay = true
-		cfg.RelayOpts = options
 		return nil
 	}
 }
 
-// DisableRelay configures libp2p to disable the relay transport.
+// DisableRelay configures libp2p to disable the v2 Relay transport.
 func DisableRelay() Option {
 	return func(cfg *Config) error {
 		cfg.RelayCustom = true
@@ -230,20 +226,14 @@ func DisableRelay() Option {
 	}
 }
 
-// EnableAutoRelay configures libp2p to enable the AutoRelay subsystem.
+// EnableAutoRelay configures libp2p to enable the AutoRelay subsystem using statically configured v2 Relays.
 //
 // Dependencies:
 //  * Relay (enabled by default)
-//  * Routing (to find relays), or StaticRelays/DefaultStaticRelays.
+//  * StaticV2Relays/DefaultStaticV2Relays.
 //
-// This subsystem performs two functions:
-//
-// 1. When this libp2p node is configured to act as a relay "hop"
-//    (circuit.OptHop is passed to EnableRelay), this node will advertise itself
-//    as a public relay using the provided routing system.
-// 2. When this libp2p node is _not_ configured as a relay "hop", it will
-//    automatically detect if it is unreachable (e.g., behind a NAT). If so, it will
-//    find, configure, and announce a set of public relays.
+// This subsystem will enable the libp2p node to automatically detect if it is unreachable (e.g., behind a NAT). If so, it will
+// reserve slots on the configured Limited Relays and announce a set of public relay addresses.
 func EnableAutoRelay() Option {
 	return func(cfg *Config) error {
 		cfg.EnableAutoRelay = true
@@ -251,9 +241,8 @@ func EnableAutoRelay() Option {
 	}
 }
 
-// StaticRelays configures known relays for autorelay; when this option is enabled
-// then the system will use the configured relays instead of querying the DHT to
-// discover relays.
+// StaticRelays configures known v2 Relays for autorelay;
+// V2 Relays are Limited Relays as opposed to V1 Relays which are unlimited Relays.
 func StaticRelays(relays []peer.AddrInfo) Option {
 	return func(cfg *Config) error {
 		cfg.StaticRelays = append(cfg.StaticRelays, relays...)
@@ -261,7 +250,7 @@ func StaticRelays(relays []peer.AddrInfo) Option {
 	}
 }
 
-// DefaultStaticRelays configures the static relays to use the known PL-operated relays.
+// DefaultStaticRelays configures the static relays to use the known PL-operated V2 relays.
 func DefaultStaticRelays() Option {
 	return func(cfg *Config) error {
 		for _, addr := range autorelay.DefaultRelays {
