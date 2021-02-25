@@ -19,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/peerstore"
 	"github.com/libp2p/go-libp2p-core/protocol"
 	"github.com/libp2p/go-libp2p-core/record"
+	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 
 	addrutil "github.com/libp2p/go-addr-util"
 	"github.com/libp2p/go-eventbus"
@@ -87,6 +88,7 @@ type BasicHost struct {
 	network    network.Network
 	mux        *msmux.MultistreamMuxer
 	ids        *identify.IDService
+	hps        *holepunch.HolePunchService
 	pings      *ping.PingService
 	natmgr     NATManager
 	maResolver *madns.Resolver
@@ -151,6 +153,11 @@ type HostOpts struct {
 
 	// DisableSignedPeerRecord disables the generation of Signed Peer Records on this host.
 	DisableSignedPeerRecord bool
+
+	// EnableHolePunching enables the peer to initiate/respond to hole punching attempts for NAT traversal.
+	EnableHolePunching bool
+	// HolePunchingOptions are options for the hole punching service
+	HolePunchingOptions []holepunch.Option
 }
 
 // NewHost constructs a new *BasicHost and activates it by attaching its stream and connection handlers to the given inet.Network.
@@ -215,6 +222,13 @@ func NewHost(ctx context.Context, n network.Network, opts *HostOpts) (*BasicHost
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Identify service: %s", err)
+	}
+
+	if opts.EnableHolePunching {
+		h.hps, err = holepunch.NewHolePunchService(h, h.ids, opts.HolePunchingOptions...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create hole punch service: %w", err)
+		}
 	}
 
 	if uint64(opts.NegotiationTimeout) != 0 {
@@ -649,7 +663,7 @@ func (h *BasicHost) NewStream(ctx context.Context, p peer.ID, pids ...protocol.I
 		}
 	case <-ctx.Done():
 		s.Reset()
-		// wait for the negotiation to cancel.
+		// wait for `SelectOneOf` to error out because of resetting the stream.
 		<-errCh
 		return nil, ctx.Err()
 	}
@@ -682,8 +696,11 @@ func (h *BasicHost) Connect(ctx context.Context, pi peer.AddrInfo) error {
 	// absorb addresses into peerstore
 	h.Peerstore().AddAddrs(pi.ID, pi.Addrs, peerstore.TempAddrTTL)
 
-	if h.Network().Connectedness(pi.ID) == network.Connected {
-		return nil
+	forceDirect, _ := network.GetForceDirectDial(ctx)
+	if !forceDirect {
+		if h.Network().Connectedness(pi.ID) == network.Connected {
+			return nil
+		}
 	}
 
 	resolved, err := h.resolveAddrs(ctx, h.Peerstore().PeerInfo(pi.ID))
@@ -1004,6 +1021,10 @@ func (h *BasicHost) Close() error {
 		}
 		if h.ids != nil {
 			h.ids.Close()
+		}
+
+		if h.hps != nil {
+			h.hps.Close()
 		}
 
 		_ = h.emitters.evtLocalProtocolsUpdated.Close()

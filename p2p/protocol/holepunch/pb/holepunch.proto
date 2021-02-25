@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package holepunch.pb;
+
+message HolePunch {
+  enum Type {
+    CONNECT = 100;
+    SYNC = 300;
+  }
+
+  optional Type type=1;
+
+  // For hole punching, we'll send some additional observed addresses to the remote peer
+  // that could have been filtered by the Host address factory (for example: AutoRelay removes all public addresses if peer has private reachability).
+  // This is a hack!
+  // We plan to have a better address discovery and advertisement mechanism in the future.
+  // See https://github.com/libp2p/go-libp2p-autonat/pull/98
+  repeated bytes ObsAddrs = 2;
+}
