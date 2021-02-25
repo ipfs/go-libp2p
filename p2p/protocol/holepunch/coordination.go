@@ -8,6 +8,7 @@ import (
 	"time"
 
 	logging "github.com/ipfs/go-log"
+	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -25,6 +26,8 @@ var (
 	Protocol protocol.ID = "/libp2p/holepunch/1.0.0"
 	// HolePunchTimeout is the timeout for the hole punch protocol stream.
 	HolePunchTimeout = 1 * time.Minute
+	// ErrNATHolePunchingUnsupported means hole punching is NOT supported by the NAT on either or both peers.
+	ErrNATHolePunchingUnsupported = errors.New("NAT does NOT support hole punching")
 
 	maxMsgSize  = 4 * 1024 // 4K
 	dialTimeout = 5 * time.Second
@@ -75,9 +78,53 @@ func NewHolePunchService(h host.Host, ids *identify.IDService, isTest bool) (*Ho
 		isTest:    isTest,
 	}
 
+	sub, err := h.EventBus().Subscribe(new(event.EvtNATDeviceTypeChanged))
+	if err != nil {
+		return nil, err
+	}
+
 	h.SetStreamHandler(Protocol, hs.handleNewStream)
 	h.Network().Notify((*netNotifiee)(hs))
+
+	hs.refCount.Add(1)
+	go hs.loop(sub)
+
 	return hs, nil
+}
+
+func (hs *HolePunchService) loop(sub event.Subscription) {
+	defer hs.refCount.Done()
+	defer sub.Close()
+
+	for {
+		select {
+		// Our local NAT device types are intialized in the peerstore when the Host is created
+		//	and updated in the peerstore by the Observed Address Manager.
+		case _, ok := <-sub.Out():
+			if !ok {
+				return
+			}
+
+			if hs.PeerSupportsHolePunching(hs.host.ID(), hs.host.Addrs()) {
+				hs.host.SetStreamHandler(Protocol, hs.handleNewStream)
+			} else {
+				hs.host.RemoveStreamHandler(Protocol)
+			}
+
+		case <-hs.ctx.Done():
+			return
+		}
+	}
+}
+
+func hasProtoAddr(protocCode int, addrs []ma.Multiaddr) bool {
+	for _, a := range addrs {
+		if _, err := a.ValueForProtocol(protocCode); err == nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Close closes the Hole Punch Service.
@@ -106,6 +153,12 @@ func (hs *HolePunchService) HolePunch(rp peer.ID) error {
 			}
 			break
 		}
+	}
+
+	// return if either peer does NOT support hole punching
+	if !hs.PeerSupportsHolePunching(rp, hs.host.Peerstore().Addrs(rp)) ||
+		!hs.PeerSupportsHolePunching(hs.host.ID(), hs.host.Addrs()) {
+		return ErrNATHolePunchingUnsupported
 	}
 
 	// hole punch
@@ -201,6 +254,40 @@ func (hs *HolePunchService) appendHandlerErr(err error) {
 	if hs.isTest {
 		hs.handlerErrs = append(hs.handlerErrs, err)
 	}
+}
+
+// PeerSupportsHolePunching returns true if the given peer with the given addresses supports hole punching.
+// It uses the peer's NAT device type detected via Identify.
+// We can hole punch with a peer ONLY if it is NOT behind a symmetric NAT for all the transport protocol it supports.
+func (hs *HolePunchService) PeerSupportsHolePunching(p peer.ID, addrs []ma.Multiaddr) bool {
+	udpSupported := hasProtoAddr(ma.P_UDP, addrs)
+	tcpSupported := hasProtoAddr(ma.P_TCP, addrs)
+
+	if udpSupported {
+		udpNAT, err := hs.host.Peerstore().Get(p, identify.UDPNATDeviceTypeKey)
+		if err != nil {
+			return false
+		}
+		udpNatType := udpNAT.(network.NATDeviceType)
+
+		if udpNatType == network.NATDeviceTypeCone || udpNatType == network.NATDeviceTypeUnknown {
+			return true
+		}
+	}
+
+	if tcpSupported {
+		tcpNAT, err := hs.host.Peerstore().Get(p, identify.TCPNATDeviceTypeKey)
+		if err != nil {
+			return false
+		}
+
+		tcpNATType := tcpNAT.(network.NATDeviceType)
+		if tcpNATType == network.NATDeviceTypeCone || tcpNATType == network.NATDeviceTypeUnknown {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (hs *HolePunchService) handleNewStream(s network.Stream) {

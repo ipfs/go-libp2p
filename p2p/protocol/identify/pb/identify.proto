@@ -11,6 +11,12 @@ message Delta {
 
 message Identify {
 
+  enum NATDeviceType {
+    UNKNOWN = 0;
+    CONE = 1;
+    SYMMETRIC = 2;
+  }
+
   // protocolVersion determines compatibility between peers
   optional string protocolVersion = 5; // e.g. ipfs/1.0.0
 
@@ -43,4 +49,8 @@ message Identify {
   // see github.com/libp2p/go-libp2p-core/record/pb/envelope.proto and
   // github.com/libp2p/go-libp2p-core/peer/pb/peer_record.proto for message definitions.
   optional bytes signedPeerRecord = 8;
+
+  optional NATDeviceType tcpNATDeviceType = 10;
+
+  optional NATDeviceType udpNATDeviceType = 11;
 }

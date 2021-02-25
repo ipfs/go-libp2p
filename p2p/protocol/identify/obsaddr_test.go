@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	detectrace "github.com/ipfs/go-detect-race"
 	"github.com/libp2p/go-eventbus"
 	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/host"
@@ -16,6 +15,7 @@ import (
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 	identify "github.com/libp2p/go-libp2p/p2p/protocol/identify"
 
+	detectrace "github.com/ipfs/go-detect-race"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/stretchr/testify/require"
 )
@@ -171,25 +171,21 @@ func TestObsAddrSet(t *testing.T) {
 	harness.observe(a2, pa4)
 	harness.observe(a3, pa4)
 
-	// these are all different so we should not yet get them.
-	if !addrsMatch(harness.oas.Addrs(), nil) {
-		t.Error("addrs should _still_ be empty (once)")
-	}
-
-	// same observer, so should not yet get them.
+	// get the address as none has been activated yet.
 	harness.observe(a1, pa4)
 	harness.observe(a2, pa4)
 	harness.observe(a3, pa4)
-	if !addrsMatch(harness.oas.Addrs(), nil) {
-		t.Error("addrs should _still_ be empty (same obs)")
+
+	if !addrsMatch(harness.oas.Addrs(), []ma.Multiaddr{a1, a2}) {
+		t.Error("should get expected addresses as there are no activated addresses")
 	}
 
 	// different observer, but same observer group.
 	harness.observe(a1, pa5)
 	harness.observe(a2, pa5)
 	harness.observe(a3, pa5)
-	if !addrsMatch(harness.oas.Addrs(), nil) {
-		t.Error("addrs should _still_ be empty (same obs group)")
+	if !addrsMatch(harness.oas.Addrs(), []ma.Multiaddr{a1, a2}) {
+		t.Error("should get expected addresses as there are no activated addresses")
 	}
 
 	harness.observe(a1, pb1)
@@ -383,6 +379,7 @@ func TestEmitNATDeviceTypeSymmetric(t *testing.T) {
 	defer cancel()
 	harness := newHarness(ctx, t)
 	require.Empty(t, harness.oas.Addrs())
+
 	emitter, err := harness.host.EventBus().Emitter(new(event.EvtLocalReachabilityChanged), eventbus.Stateful)
 	require.NoError(t, err)
 	require.NoError(t, emitter.Emit(event.EvtLocalReachabilityChanged{Reachability: network.ReachabilityPrivate}))
@@ -422,6 +419,11 @@ func TestEmitNATDeviceTypeSymmetric(t *testing.T) {
 		t.Fatal("did not get Symmetric NAT event")
 	}
 
+	natType, err := harness.host.Peerstore().Get(harness.host.ID(), identify.TCPNATDeviceTypeKey)
+	require.NoError(t, err)
+
+	require.Equal(t, network.NATDeviceTypeSymmetric, natType.(network.NATDeviceType))
+
 }
 
 func TestEmitNATDeviceTypeCone(t *testing.T) {
@@ -429,6 +431,7 @@ func TestEmitNATDeviceTypeCone(t *testing.T) {
 	defer cancel()
 	harness := newHarness(ctx, t)
 	require.Empty(t, harness.oas.Addrs())
+
 	emitter, err := harness.host.EventBus().Emitter(new(event.EvtLocalReachabilityChanged), eventbus.Stateful)
 	require.NoError(t, err)
 	require.NoError(t, emitter.Emit(event.EvtLocalReachabilityChanged{Reachability: network.ReachabilityPrivate}))
@@ -465,4 +468,9 @@ func TestEmitNATDeviceTypeCone(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("did not get Cone NAT event")
 	}
+
+	natType, err := harness.host.Peerstore().Get(harness.host.ID(), identify.TCPNATDeviceTypeKey)
+	require.NoError(t, err)
+
+	require.Equal(t, network.NATDeviceTypeCone, natType.(network.NATDeviceType))
 }

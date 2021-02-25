@@ -126,6 +126,21 @@ func subtestIDService(t *testing.T) {
 	testHasCertifiedAddrs(t, h1, h2p, []ma.Multiaddr{})
 	testHasCertifiedAddrs(t, h2, h1p, []ma.Multiaddr{})
 
+	// test we have the TCP & UDP NAT Device Types on both sides
+	udp, err := h1.Peerstore().Get(h2p, identify.UDPNATDeviceTypeKey)
+	require.NoError(t, err)
+	require.Equal(t, network.NATDeviceTypeUnknown, udp.(network.NATDeviceType))
+	tcp, err := h1.Peerstore().Get(h2p, identify.TCPNATDeviceTypeKey)
+	require.NoError(t, err)
+	require.Equal(t, network.NATDeviceTypeUnknown, tcp.(network.NATDeviceType))
+
+	udp, err = h2.Peerstore().Get(h1p, identify.UDPNATDeviceTypeKey)
+	require.NoError(t, err)
+	require.Equal(t, network.NATDeviceTypeUnknown, udp.(network.NATDeviceType))
+	tcp, err = h2.Peerstore().Get(h1p, identify.TCPNATDeviceTypeKey)
+	require.NoError(t, err)
+	require.Equal(t, network.NATDeviceTypeUnknown, tcp.(network.NATDeviceType))
+
 	// test that we received the "identify completed" event.
 	select {
 	case <-sub.Out():
@@ -1098,4 +1113,64 @@ func TestIncomingIDStreamsTimeout(t *testing.T) {
 			return len(c.GetStreams()) == 0
 		}, 1*time.Second, 200*time.Millisecond)
 	}
+}
+
+func TestNATDeviceTypeExchangedAndPersisted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h1 := blhost.NewBlankHost(swarmt.GenSwarm(t, ctx))
+	h2 := blhost.NewBlankHost(swarmt.GenSwarm(t, ctx))
+
+	ids1, err := identify.NewIDService(h1)
+	require.NoError(t, err)
+
+	ids2, err := identify.NewIDService(h2)
+	require.NoError(t, err)
+	defer ids1.Close()
+	defer ids2.Close()
+
+	h1.SetStreamHandler(identify.ID, func(s network.Stream) {
+		msg := new(pb.Identify)
+		msg.TcpNATDeviceType = pb.Identify_SYMMETRIC.Enum()
+		msg.UdpNATDeviceType = pb.Identify_CONE.Enum()
+
+		wr := protoio.NewDelimitedWriter(s)
+		wr.WriteMsg(msg)
+		s.Close()
+	})
+
+	h2.SetStreamHandler(identify.ID, func(s network.Stream) {
+		msg := new(pb.Identify)
+		msg.TcpNATDeviceType = pb.Identify_CONE.Enum()
+		msg.UdpNATDeviceType = pb.Identify_SYMMETRIC.Enum()
+
+		wr := protoio.NewDelimitedWriter(s)
+		wr.WriteMsg(msg)
+		s.Close()
+	})
+
+	require.NoError(t, h1.Connect(ctx, peer.AddrInfo{
+		ID:    h2.ID(),
+		Addrs: h2.Addrs(),
+	}))
+
+	ids1.IdentifyConn(h1.Network().ConnsToPeer(h2.ID())[0])
+	ids2.IdentifyConn(h2.Network().ConnsToPeer(h1.ID())[0])
+
+	// on h1
+	tcp, err := h1.Peerstore().Get(h2.ID(), identify.TCPNATDeviceTypeKey)
+	require.NoError(t, err)
+	require.Equal(t, network.NATDeviceTypeCone, tcp.(network.NATDeviceType))
+	udp, err := h1.Peerstore().Get(h2.ID(), identify.UDPNATDeviceTypeKey)
+	require.NoError(t, err)
+	require.Equal(t, network.NATDeviceTypeSymmetric, udp.(network.NATDeviceType))
+
+	// on h2
+	tcp, err = h2.Peerstore().Get(h1.ID(), identify.TCPNATDeviceTypeKey)
+	require.NoError(t, err)
+	require.Equal(t, network.NATDeviceTypeSymmetric, tcp.(network.NATDeviceType))
+	udp, err = h2.Peerstore().Get(h1.ID(), identify.UDPNATDeviceTypeKey)
+	require.NoError(t, err)
+	require.Equal(t, network.NATDeviceTypeCone, udp.(network.NATDeviceType))
 }

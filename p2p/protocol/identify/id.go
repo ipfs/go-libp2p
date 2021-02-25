@@ -41,6 +41,13 @@ const ID = "/ipfs/id/1.0.0"
 // 0.4.17 which asserted an exact version match.
 const LibP2PVersion = "ipfs/0.1.0"
 
+const (
+	// UDPNATDeviceTypeKey is the key with which we will persist a peer's UDP NAT Device Type to the peerstore.
+	UDPNATDeviceTypeKey = "UDPNATDeviceType"
+	// TCPNATDeviceTypeKey is the key with which we will persist a peer's TCP NAT Device Type to the peerstore.
+	TCPNATDeviceTypeKey = "TCPNATDeviceType"
+)
+
 // ClientVersion is the default user agent.
 //
 // Deprecated: Set this with the UserAgent option.
@@ -542,8 +549,35 @@ func (ids *IDService) createBaseIdentifyResponse(
 	av := ids.UserAgent
 	mes.ProtocolVersion = &pv
 	mes.AgentVersion = &av
+	udpNAT, tcpNAT := ids.observedAddrs.getNATDeviceTypes()
+	udpNATPb := toPbNATDeviceType(udpNAT)
+	tcpNATPb := toPbNATDeviceType(tcpNAT)
+	mes.UdpNATDeviceType = &udpNATPb
+	mes.TcpNATDeviceType = &tcpNATPb
 
 	return mes
+}
+
+func toPbNATDeviceType(t network.NATDeviceType) pb.Identify_NATDeviceType {
+	switch t {
+	case network.NATDeviceTypeCone:
+		return pb.Identify_CONE
+	case network.NATDeviceTypeSymmetric:
+		return pb.Identify_SYMMETRIC
+	default:
+		return pb.Identify_UNKNOWN
+	}
+}
+
+func fromPbNATDeviceType(typ pb.Identify_NATDeviceType) network.NATDeviceType {
+	switch typ {
+	case pb.Identify_CONE:
+		return network.NATDeviceTypeCone
+	case pb.Identify_SYMMETRIC:
+		return network.NATDeviceTypeSymmetric
+	default:
+		return network.NATDeviceTypeUnknown
+	}
 }
 
 func (ids *IDService) getSignedRecord(snapshot *identifySnapshot) []byte {
@@ -634,9 +668,13 @@ func (ids *IDService) consumeMessage(mes *pb.Identify, c network.Conn) {
 	// get protocol versions
 	pv := mes.GetProtocolVersion()
 	av := mes.GetAgentVersion()
+	udpNATType := mes.GetUdpNATDeviceType()
+	tcpNATType := mes.GetTcpNATDeviceType()
 
 	ids.Host.Peerstore().Put(p, "ProtocolVersion", pv)
 	ids.Host.Peerstore().Put(p, "AgentVersion", av)
+	ids.Host.Peerstore().Put(p, UDPNATDeviceTypeKey, fromPbNATDeviceType(udpNATType))
+	ids.Host.Peerstore().Put(p, TCPNATDeviceTypeKey, fromPbNATDeviceType(tcpNATType))
 
 	// get the key from the other side. we may not have it (no-auth transport)
 	ids.consumeReceivedPubKey(c, mes.PublicKey)

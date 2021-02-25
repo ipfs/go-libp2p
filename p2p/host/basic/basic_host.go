@@ -212,6 +212,8 @@ func NewHost(ctx context.Context, n network.Network, opts *HostOpts) (*BasicHost
 		h.mux = opts.MultistreamMuxer
 	}
 
+	h.Peerstore().Put(h.ID(), identify.UDPNATDeviceTypeKey, network.NATDeviceTypeUnknown)
+	h.Peerstore().Put(h.ID(), identify.TCPNATDeviceTypeKey, network.NATDeviceTypeUnknown)
 	// we can't set this as a default above because it depends on the *BasicHost.
 	if h.disableSignedPeerRecord {
 		h.ids, err = identify.NewIDService(h, identify.UserAgent(opts.UserAgent), identify.DisableSignedPeerRecord())
