@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"sync"
 	"time"
@@ -28,6 +29,11 @@ var (
 	DesiredRelays = 1
 
 	BootDelay = 20 * time.Second
+
+	CheckUpdateFactor   float64       = 2
+	CheckUpdateJitter                 = true
+	CheckUpdateMinDelay time.Duration = 15 * time.Second
+	CheckUpdateMaxDelay time.Duration = 15 * time.Minute
 )
 
 // These are the known PL-operated relays
@@ -84,6 +90,10 @@ func (ar *AutoRelay) background(ctx context.Context) {
 	// when true, we need to identify push
 	push := false
 
+	reachabilityChanged := make(chan struct{}, 1)
+	updatec := make(chan struct{}, 1)
+	go ar.findRelays(ctx, reachabilityChanged, updatec)
+
 	for {
 		select {
 		case ev, ok := <-subReachability.Out():
@@ -95,19 +105,22 @@ func (ar *AutoRelay) background(ctx context.Context) {
 				return
 			}
 
-			var update bool
-			if evt.Reachability == network.ReachabilityPrivate {
-				// TODO: this is a long-lived (2.5min task) that should get spun up in a separate thread
-				// and canceled if the relay learns the nat is now public.
-				update = ar.findRelays(ctx)
-			}
-
 			ar.mx.Lock()
-			if update || (ar.status != evt.Reachability && evt.Reachability != network.ReachabilityUnknown) {
+			if ar.status != evt.Reachability && evt.Reachability != network.ReachabilityUnknown {
+				select {
+				case reachabilityChanged <- struct{}{}:
+				default:
+				}
 				push = true
 			}
+
 			ar.status = evt.Reachability
 			ar.mx.Unlock()
+
+			log.Debugf("relay background subReachability push %v Reachability %d", push, ar.status)
+		case <-updatec:
+			push = true
+			log.Debugf("relay background update")
 		case <-ar.disconnect:
 			push = true
 		case <-ctx.Done():
@@ -124,28 +137,70 @@ func (ar *AutoRelay) background(ctx context.Context) {
 	}
 }
 
-func (ar *AutoRelay) findRelays(ctx context.Context) bool {
+func (ar *AutoRelay) findRelays(ctx context.Context, reachabilityChanged <-chan struct{}, updatec chan<- struct{}) {
+	running := false
+	retrys := 0
+	delay := CheckUpdateMinDelay
+
+	for {
+		select {
+		case <-reachabilityChanged:
+			ar.mx.Lock()
+			if ar.status == network.ReachabilityPrivate {
+				running = true
+			} else if ar.status == network.ReachabilityPublic {
+				running = false
+			}
+			ar.mx.Unlock()
+
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return
+		}
+		if running {
+			if ar.checkUpdate(ctx) {
+				select {
+				case updatec <- struct{}{}:
+				default:
+				}
+				retrys = 0
+				delay = CheckUpdateMinDelay
+			} else {
+				if ar.numRelays() >= DesiredRelays {
+					retrys = 0
+					delay = CheckUpdateMinDelay
+				} else {
+					dur := float64(CheckUpdateMinDelay) * math.Pow(CheckUpdateFactor, float64(retrys))
+					if CheckUpdateJitter {
+						dur = dur + rand.Float64()*float64(CheckUpdateMinDelay)
+					}
+					if dur > float64(CheckUpdateMaxDelay) {
+						delay = CheckUpdateMaxDelay
+						continue
+					}
+
+					retrys++
+					delay = time.Duration(dur)
+				}
+			}
+		} else {
+			retrys = 0
+			delay = CheckUpdateMinDelay
+		}
+	}
+}
+
+func (ar *AutoRelay) checkUpdate(ctx context.Context) (updated bool) {
 	if ar.numRelays() >= DesiredRelays {
 		return false
 	}
 
-	update := false
-	for retry := 0; retry < 5; retry++ {
-		if retry > 0 {
-			log.Debug("no relays connected; retrying in 30s")
-			select {
-			case <-time.After(30 * time.Second):
-			case <-ctx.Done():
-				return update
-			}
-		}
-
-		update = ar.findRelaysOnce(ctx) || update
-		if ar.numRelays() > 0 {
-			return update
-		}
+	update := ar.findRelaysOnce(ctx)
+	if ar.numRelays() > 0 {
+		log.Debugf("relay findRelays update %v", update)
+		return update
 	}
-	return update
+	return false
 }
 
 func (ar *AutoRelay) findRelaysOnce(ctx context.Context) bool {
