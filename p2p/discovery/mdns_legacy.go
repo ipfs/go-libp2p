@@ -36,7 +36,7 @@ type Notifee interface {
 	HandlePeerFound(peer.AddrInfo)
 }
 
-type mdnsService struct {
+type mdnsServiceLegacy struct {
 	server  *mdns.Server
 	service *mdns.MDNSService
 	host    host.Host
@@ -101,7 +101,7 @@ func NewMdnsService(ctx context.Context, peerhost host.Host, interval time.Durat
 		return nil, err
 	}
 
-	s := &mdnsService{
+	s := &mdnsServiceLegacy{
 		server:   server,
 		service:  service,
 		host:     peerhost,
@@ -114,11 +114,11 @@ func NewMdnsService(ctx context.Context, peerhost host.Host, interval time.Durat
 	return s, nil
 }
 
-func (m *mdnsService) Close() error {
+func (m *mdnsServiceLegacy) Close() error {
 	return m.server.Shutdown()
 }
 
-func (m *mdnsService) pollForEntries(ctx context.Context) {
+func (m *mdnsServiceLegacy) pollForEntries(ctx context.Context) {
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
 
@@ -156,7 +156,7 @@ func (m *mdnsService) pollForEntries(ctx context.Context) {
 	}
 }
 
-func (m *mdnsService) handleEntry(e *mdns.ServiceEntry) {
+func (m *mdnsServiceLegacy) handleEntry(e *mdns.ServiceEntry) {
 	log.Debugf("Handling MDNS entry: [IPv4 %s][IPv6 %s]:%d %s", e.AddrV4, e.AddrV6, e.Port, e.Info)
 	mpeer, err := peer.Decode(e.Info)
 	if err != nil {
@@ -200,13 +200,13 @@ func (m *mdnsService) handleEntry(e *mdns.ServiceEntry) {
 	m.lk.Unlock()
 }
 
-func (m *mdnsService) RegisterNotifee(n Notifee) {
+func (m *mdnsServiceLegacy) RegisterNotifee(n Notifee) {
 	m.lk.Lock()
 	m.notifees = append(m.notifees, n)
 	m.lk.Unlock()
 }
 
-func (m *mdnsService) UnregisterNotifee(n Notifee) {
+func (m *mdnsServiceLegacy) UnregisterNotifee(n Notifee) {
 	m.lk.Lock()
 	found := -1
 	for i, notif := range m.notifees {
