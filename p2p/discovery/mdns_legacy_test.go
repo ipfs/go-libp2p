@@ -30,12 +30,12 @@ func TestMdnsDiscovery(t *testing.T) {
 	a := bhost.New(swarmt.GenSwarm(t, ctx))
 	b := bhost.New(swarmt.GenSwarm(t, ctx))
 
-	sa, err := NewMdnsService(ctx, a, time.Second, "someTag")
+	sa, err := NewMdnsService(ctx, a, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	sb, err := NewMdnsService(ctx, b, time.Second, "someTag")
+	sb, err := NewMdnsService(ctx, b, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

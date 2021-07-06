@@ -6,6 +6,7 @@ require (
 	github.com/btcsuite/btcd v0.21.0-beta // indirect
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
 	github.com/gogo/protobuf v1.3.2
+	github.com/grandcat/zeroconf v1.0.1-0.20210705173249-1df3d2672866
 	github.com/ipfs/go-cid v0.0.7
 	github.com/ipfs/go-datastore v0.4.5
 	github.com/ipfs/go-detect-race v0.0.1

@@ -3,7 +3,6 @@ package discovery
 import (
 	"context"
 	"errors"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -26,16 +25,6 @@ var log = logging.Logger("mdns")
 
 const ServiceTag = "_ipfs-discovery._udp"
 
-type Service interface {
-	io.Closer
-	RegisterNotifee(Notifee)
-	UnregisterNotifee(Notifee)
-}
-
-type Notifee interface {
-	HandlePeerFound(peer.AddrInfo)
-}
-
 type mdnsServiceLegacy struct {
 	server  *mdns.Server
 	service *mdns.MDNSService
@@ -46,6 +35,8 @@ type mdnsServiceLegacy struct {
 	notifees []Notifee
 	interval time.Duration
 }
+
+var _ Service = &mdnsServiceLegacy{}
 
 func getDialableListenAddrs(ph host.Host) ([]*net.TCPAddr, error) {
 	var out []*net.TCPAddr
@@ -69,8 +60,7 @@ func getDialableListenAddrs(ph host.Host) ([]*net.TCPAddr, error) {
 	return out, nil
 }
 
-func NewMdnsService(ctx context.Context, peerhost host.Host, interval time.Duration, serviceTag string) (Service, error) {
-
+func NewMdnsServiceLegacy(ctx context.Context, peerhost host.Host, interval time.Duration) (Service, error) {
 	var ipaddrs []net.IP
 	port := 4001
 
@@ -87,10 +77,7 @@ func NewMdnsService(ctx context.Context, peerhost host.Host, interval time.Durat
 	myid := peerhost.ID().Pretty()
 
 	info := []string{myid}
-	if serviceTag == "" {
-		serviceTag = ServiceTag
-	}
-	service, err := mdns.NewMDNSService(myid, serviceTag, "", "", port, ipaddrs, info)
+	service, err := mdns.NewMDNSService(myid, ServiceTag, "", "", port, ipaddrs, info)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +93,7 @@ func NewMdnsService(ctx context.Context, peerhost host.Host, interval time.Durat
 		service:  service,
 		host:     peerhost,
 		interval: interval,
-		tag:      serviceTag,
+		tag:      ServiceTag,
 	}
 
 	go s.pollForEntries(ctx)
