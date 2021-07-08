@@ -58,8 +58,11 @@ func (rh *RoutedHost) Connect(ctx context.Context, pi peer.AddrInfo) error {
 
 	// Check if we have some addresses in our recent memory.
 	addrs := rh.Peerstore().Addrs(pi.ID)
+	hasSearched := false // Used to determine if we have used to router to search for addresses.
+
 	if len(addrs) < 1 {
 		// no addrs? find some with the routing system.
+		hasSearched = true
 		var err error
 		addrs, err = rh.findPeerAddrs(ctx, pi.ID)
 		if err != nil {
@@ -106,7 +109,48 @@ func (rh *RoutedHost) Connect(ctx context.Context, pi peer.AddrInfo) error {
 
 	// if we're here, we got some addrs. let's use our wrapped host to connect.
 	pi.Addrs = addrs
-	return rh.host.Connect(ctx, pi)
+	connErr := rh.host.Connect(ctx, pi)
+
+	// If we could not connect with the addresses that we already had, we use
+	// the router to search for new addresses. Unless we have already searched for
+	// new addresses, then there is no reason to search again.
+	if connErr != nil && hasSearched {
+		return connErr
+	} else if connErr != nil {
+		newAddrs, findErr := rh.findPeerAddrs(ctx, pi.ID)
+
+		if findErr != nil {
+			return findErr // We could not find any addresses.
+		}
+
+		// If we have found new addresses we attempt to connect.
+		if hasNewAddr(pi.Addrs, newAddrs) {
+			pi.Addrs = addrs
+			return rh.host.Connect(ctx, pi)
+		}
+	}
+
+	return nil
+}
+
+func hasNewAddr(oldAddrs, newAddrs []ma.Multiaddr) bool {
+	for _, addr := range newAddrs {
+		if !hasAddr(addr, oldAddrs) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasAddr(addr ma.Multiaddr, addrs []ma.Multiaddr) bool {
+	for _, addr2 := range addrs {
+		if addr2 == addr {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (rh *RoutedHost) findPeerAddrs(ctx context.Context, id peer.ID) ([]ma.Multiaddr, error) {
