@@ -654,6 +654,10 @@ func (ids *IDService) consumeReceivedPubKey(c network.Conn, kb []byte) {
 		return
 	}
 
+	if ids.Host.Peerstore().PubKey(rp) != nil {
+		return
+	}
+
 	newKey, err := ic.UnmarshalPublicKey(kb)
 	if err != nil {
 		log.Warnf("%s cannot unmarshal key from remote peer: %s, %s", lp, rp, err)
