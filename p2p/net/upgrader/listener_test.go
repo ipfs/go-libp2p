@@ -358,6 +358,40 @@ func TestListenerResourceManagement(t *testing.T) {
 	defer sconn.Close()
 }
 
+func TestListenerReleasesScopeOfConnClosedBeforeAccept(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	rcmgr := mocknetwork.NewMockResourceManager(ctrl)
+	id, upgrader := createUpgraderWithResourceManager(t, rcmgr)
+	ln := createListener(t, upgrader)
+	defer ln.Close()
+
+	connScope := mocknetwork.NewMockConnManagementScope(ctrl)
+	released := make(chan struct{})
+	gomock.InOrder(
+		rcmgr.EXPECT().OpenConnection(network.DirInbound, true, gomock.Not(ln.Multiaddr())).Return(connScope, nil),
+		connScope.EXPECT().PeerScope(),
+		connScope.EXPECT().SetPeer(id),
+		connScope.EXPECT().PeerScope(),
+		connScope.EXPECT().Done().Do(func() { close(released) }),
+	)
+
+	cconn, err := dial(t, upgrader, ln.Multiaddr(), id, &network.NullScope{})
+	require.NoError(t, err)
+	// Close the connection from the dialing side before the listener accepts it.
+	require.NoError(t, cconn.Close())
+	// Give the listening side time to notice the remote close.
+	time.Sleep(200 * time.Millisecond)
+
+	go ln.Accept()
+
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("connection scope of a connection closed before Accept was not released")
+	}
+}
+
 func TestListenerResourceManagementDenied(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

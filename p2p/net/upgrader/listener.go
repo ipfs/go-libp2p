@@ -151,6 +151,11 @@ func (l *listener) Accept() (transport.CapableConn, error) {
 		if !c.IsClosed() {
 			return c, nil
 		}
+		// Nothing else owns this conn now, so close it to release its
+		// resource scope. IsClosed is also true after a local keepalive or
+		// write failure, not only a remote close. This may wait for a close
+		// already in flight, about 5s at worst with a stalled TLS peer.
+		c.Close()
 	}
 	if strings.Contains(l.err.Error(), "use of closed network connection") {
 		return nil, transport.ErrListenerClosed
