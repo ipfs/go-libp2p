@@ -28,7 +28,7 @@
 libp2p is the product of a long, and arduous quest of understanding -- a deep dive into the internet's network stack, and plentiful peer-to-peer protocols from the past. Building large-scale peer-to-peer systems has been complex and difficult in the last 15 years, and libp2p is a way to fix that. It is a "network stack" -- a protocol suite -- that cleanly separates concerns, and enables sophisticated applications to only use the protocols they absolutely need, without giving up interoperability and upgradeability. libp2p grew out of IPFS, but it is built so that lots of people can use it, for lots of different projects.
 
 To learn more, check out the following resources:
-- [**Our documentation**](https://docs.libp2p.io)
+- [**Our documentation**](https://libp2p.io/docs)
 - [**Our community discussion forum**](https://discuss.libp2p.io)
 - [**The libp2p Specification**](https://github.com/libp2p/specs)
 - [**js-libp2p implementation**](https://github.com/libp2p/js-libp2p)

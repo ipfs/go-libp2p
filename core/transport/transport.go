@@ -54,7 +54,7 @@ type CapableConn interface {
 // Resolver or SkipResolver interface. When wrapping/embedding a transport, you should
 // ensure that the Resolver/SkipResolver interface is handled correctly.
 //
-// For a conceptual overview, see https://docs.libp2p.io/concepts/transport/
+// For a conceptual overview, see https://libp2p.io/docs/transports-overview/
 type Transport interface {
 	// Dial dials a remote peer. It should try to reuse local listener
 	// addresses if possible, but it may choose not to.
