@@ -186,7 +186,11 @@ func (d *BackoffDiscovery) FindPeers(ctx context.Context, ns string, opts ...dis
 	for _, ai := range c.peers {
 		rcvPeers = append(rcvPeers, ai)
 	}
-	c.sendingChs[evtCh] = options.Limit
+	remaining := options.Limit
+	if remaining == 0 {
+		remaining = -1 // An unlimited query must remain distinct from an exhausted limit.
+	}
+	c.sendingChs[evtCh] = remaining
 
 	go findPeerReceiver(ctx, pch, evtCh, rcvPeers)
 
@@ -238,9 +242,11 @@ func findPeerDispatcher(ctx context.Context, c *backoffCache, pch <-chan peer.Ad
 			c.peers[ai.ID] = sendAi
 
 			for ch, rem := range c.sendingChs {
-				if rem > 0 {
+				if rem != 0 {
 					ch <- sendAi
-					c.sendingChs[ch] = rem - 1
+					if rem > 0 {
+						c.sendingChs[ch] = rem - 1
+					}
 				}
 			}
 
