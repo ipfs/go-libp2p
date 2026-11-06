@@ -60,13 +60,16 @@ func NewProtoBook(meta pstore.PeerMetadata, opts ...ProtoBookOption) (*dsProtoBo
 }
 
 func (pb *dsProtoBook) SetProtocols(p peer.ID, protos ...protocol.ID) error {
-	if len(protos) > pb.maxProtos {
+	if pb.maxProtos < 0 {
 		return errTooManyProtocols
 	}
 
-	protomap := make(map[protocol.ID]struct{}, len(protos))
+	protomap := make(map[protocol.ID]struct{})
 	for _, proto := range protos {
 		protomap[proto] = struct{}{}
+		if len(protomap) > pb.maxProtos {
+			return errTooManyProtocols
+		}
 	}
 
 	s := pb.segments.get(p)
@@ -85,11 +88,19 @@ func (pb *dsProtoBook) AddProtocols(p peer.ID, protos ...protocol.ID) error {
 	if err != nil {
 		return err
 	}
-	if len(pmap)+len(protos) > pb.maxProtos {
+	if len(pmap) > pb.maxProtos {
 		return errTooManyProtocols
 	}
-
+	newprotos := make(map[protocol.ID]struct{})
 	for _, proto := range protos {
+		if _, exists := pmap[proto]; !exists {
+			newprotos[proto] = struct{}{}
+		}
+		if len(pmap)+len(newprotos) > pb.maxProtos {
+			return errTooManyProtocols
+		}
+	}
+	for proto := range newprotos {
 		pmap[proto] = struct{}{}
 	}
 

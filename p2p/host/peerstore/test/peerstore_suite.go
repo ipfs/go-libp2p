@@ -404,4 +404,33 @@ func TestPeerstoreProtoStoreLimits(t *testing.T, ps pstore.Peerstore, limit int)
 		require.NoError(t, ps.AddProtocols(p, p2...))
 		require.EqualError(t, ps.AddProtocols(p, "proto"), "too many protocols")
 	})
+	t.Run("setting duplicate protocols", func(t *testing.T) {
+		duplicates := append(append([]protocol.ID{}, protocols...), protocols...)
+		require.NoError(t, ps.SetProtocols(p, duplicates...))
+		stored, err := ps.GetProtocols(p)
+		require.NoError(t, err)
+		require.ElementsMatch(t, protocols, stored)
+	})
+	t.Run("adding existing protocols at the limit", func(t *testing.T) {
+		require.NoError(t, ps.SetProtocols(p, protocols...))
+		require.NoError(t, ps.AddProtocols(p, protocols...))
+		stored, err := ps.GetProtocols(p)
+		require.NoError(t, err)
+		require.ElementsMatch(t, protocols, stored)
+	})
+	t.Run("adding duplicate new protocols", func(t *testing.T) {
+		require.NoError(t, ps.SetProtocols(p, protocols[:limit-1]...))
+		require.NoError(t, ps.AddProtocols(p, protocols[0], protocols[limit-1], protocols[limit-1]))
+		stored, err := ps.GetProtocols(p)
+		require.NoError(t, err)
+		require.ElementsMatch(t, protocols, stored)
+	})
+	t.Run("rejected addition preserves protocols", func(t *testing.T) {
+		initial := protocols[:limit-1]
+		require.NoError(t, ps.SetProtocols(p, initial...))
+		require.EqualError(t, ps.AddProtocols(p, protocols[limit-1], "extra"), "too many protocols")
+		stored, err := ps.GetProtocols(p)
+		require.NoError(t, err)
+		require.ElementsMatch(t, initial, stored)
+	})
 }
