@@ -30,6 +30,17 @@ type closedMuxedConn struct {
 func (c *closedMuxedConn) IsClosed() bool { return c.closed }
 func (c *closedMuxedConn) Close() error   { return nil }
 
+// blockingCloseConn is closed, and its Close blocks until unblock is closed.
+type blockingCloseConn struct {
+	closedMuxedConn
+	unblock chan struct{}
+}
+
+func (c *blockingCloseConn) Close() error {
+	<-c.unblock
+	return nil
+}
+
 func newTestRcmgr(t *testing.T) network.ResourceManager {
 	t.Helper()
 	rm, err := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(rcmgr.InfiniteLimits), rcmgr.WithConnRateLimiters(&rate.Limiter{}))
@@ -84,9 +95,8 @@ func TestAcceptReleasesScopeOfClosedConn(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, liveConn, got)
 
-	st := systemStat(t, rm)
-	require.Equal(t, 1, st.NumConnsInbound)
-	require.Equal(t, 1, st.NumFD)
+	require.Eventually(t, func() bool { return systemStat(t, rm).NumConnsInbound == 1 }, 5*time.Second, time.Millisecond)
+	require.Equal(t, 1, systemStat(t, rm).NumFD)
 	require.NoError(t, rm.ViewPeer(deadPeer, func(s network.PeerScope) error {
 		require.Equal(t, 0, s.Stat().NumConnsInbound)
 		return nil
@@ -116,11 +126,11 @@ func TestAcceptReleasesScopeOfConnClosedByRemote(t *testing.T) {
 	require.Eventually(t, c.IsClosed, 30*time.Second, time.Millisecond)
 	require.Equal(t, 1, systemStat(t, rm).NumConnsInbound)
 
-	_, err = acceptFrom(c)
-	require.Error(t, err)
-	st := systemStat(t, rm)
-	require.Equal(t, 0, st.NumConnsInbound)
-	require.Equal(t, 0, st.NumFD)
+	// Hand it back to the running listener, as handleIncoming would.
+	go ln.Accept()
+	ln.incoming <- c
+	require.Eventually(t, func() bool { return systemStat(t, rm).NumConnsInbound == 0 }, 5*time.Second, time.Millisecond)
+	require.Equal(t, 0, systemStat(t, rm).NumFD)
 }
 
 // A leaked scope also holds a slot in the per-IP limiter, which would eventually
@@ -133,5 +143,34 @@ func TestAcceptReleasesPerIPLimitOfClosedConn(t *testing.T) {
 		require.NoErrorf(t, err, "IP refused after %d conns closed before Accept", i)
 		_, err = acceptFrom(&transportConn{MuxedConn: &closedMuxedConn{closed: true}, scope: s})
 		require.Error(t, err)
+		require.Eventually(t, func() bool { return systemStat(t, rm).NumConnsInbound == 0 }, 5*time.Second, time.Millisecond)
 	}
+}
+
+// Closing a skipped conn can wait for a close already in flight. That must not
+// hold up the live conn queued behind it.
+func TestAcceptDoesNotBlockOnClose(t *testing.T) {
+	rm := newTestRcmgr(t)
+	addr := ma.StringCast("/ip4/127.0.0.1/tcp/1")
+	dead, err := rm.OpenConnection(network.DirInbound, true, addr)
+	require.NoError(t, err)
+
+	unblock := make(chan struct{})
+	liveConn := &transportConn{MuxedConn: &closedMuxedConn{}, scope: &network.NullScope{}}
+	done := make(chan transport.CapableConn, 1)
+	go func() {
+		c, _ := acceptFrom(&transportConn{MuxedConn: &blockingCloseConn{closedMuxedConn{closed: true}, unblock}, scope: dead}, liveConn)
+		done <- c
+	}()
+	select {
+	case c := <-done:
+		require.Same(t, liveConn, c)
+	case <-time.After(5 * time.Second):
+		close(unblock)
+		t.Fatal("Accept blocked on closing a skipped conn")
+	}
+
+	require.Equal(t, 1, systemStat(t, rm).NumConnsInbound, "scope is released when Close returns")
+	close(unblock)
+	require.Eventually(t, func() bool { return systemStat(t, rm).NumConnsInbound == 0 }, 5*time.Second, time.Millisecond)
 }
