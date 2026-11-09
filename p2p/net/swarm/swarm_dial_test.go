@@ -428,3 +428,39 @@ func TestSkipDialingManyDNS(t *testing.T) {
 	require.NoError(t, err)
 	require.Less(t, len(resolved), 3, "got: %v", resolved)
 }
+
+// TestAddrsForDialForceDirectAfterClose checks that a direct dial that races
+// with Swarm.Close does not panic. Close drops the transports, so
+// TransportForDialing returns nil; such an address must be filtered out
+// rather than dereferenced.
+func TestAddrsForDialForceDirectAfterClose(t *testing.T) {
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	require.NoError(t, err)
+	id, err := peer.IDFromPrivateKey(priv)
+	require.NoError(t, err)
+
+	ps, err := pstoremem.NewPeerstore()
+	require.NoError(t, err)
+	ps.AddPubKey(id, priv.GetPublic())
+	ps.AddPrivKey(id, priv)
+	t.Cleanup(func() { ps.Close() })
+
+	tpt, err := websocket.New(nil, &network.NullResourceManager{}, nil)
+	require.NoError(t, err)
+	s, err := NewSwarm(id, ps, eventbus.NewBus())
+	require.NoError(t, err)
+	require.NoError(t, s.AddTransport(tpt))
+
+	addr := ma.StringCast("/ip4/1.2.3.4/tcp/1234/ws")
+	require.True(t, s.nonProxyAddr(addr))
+
+	otherPeer := test.RandPeerIDFatal(t)
+	ps.AddAddr(otherPeer, addr, time.Hour)
+	require.NoError(t, s.Close())
+
+	require.NotPanics(t, func() {
+		require.False(t, s.nonProxyAddr(addr))
+		ctx := network.WithForceDirectDial(context.Background(), "test")
+		_, _, _ = s.addrsForDial(ctx, otherPeer)
+	})
+}
