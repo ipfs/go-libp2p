@@ -83,9 +83,21 @@ func defaultListenUDP(network string, laddr *net.UDPAddr) (net.PacketConn, error
 	return net.ListenUDP(network, laddr)
 }
 
+// newSourceIPSelector wraps a route table, returning a nil SourceIPSelector
+// when there is no table to wrap.
+//
+// The nil has to be an untyped nil so it reaches callers as a nil interface:
+// returning a nil *netrouteSourceIPSelector would still satisfy the `router !=
+// nil` check in TransportWithAssociationForDial and change nothing.
+func newSourceIPSelector(r netroute.Router, err error) (SourceIPSelector, error) {
+	if err != nil || r == nil {
+		return nil, err
+	}
+	return &netrouteSourceIPSelector{routes: r}, nil
+}
+
 func defaultSourceIPSelectorFn() (SourceIPSelector, error) {
-	r, err := netroute.New()
-	return &netrouteSourceIPSelector{routes: r}, err
+	return newSourceIPSelector(netroute.New())
 }
 
 const (
