@@ -538,16 +538,31 @@ func TestFailuresOnResponder(t *testing.T) {
 			defer h2.Close()
 			defer relay.Close()
 
-			time.Sleep(100 * time.Millisecond)
-			// Apparently changing the order of the following two flakiness.
-			// https://github.com/libp2p/go-libp2p/issues/3440
-			require.EventuallyWithT(t, func(c *assert.CollectT) {
-				assert.Contains(c, h1.Mux().Protocols(), holepunch.Protocol)
-			}, time.Second, 100*time.Millisecond)
+			// The holepunch.Service installs its stream handler asynchronously
+			// from waitForPublicAddr (see p2p/protocol/holepunch/svc.go),
+			// gated on the local node observing at least one public address.
+			// Block until that handler is registered on h1 before connecting,
+			// otherwise the test can race the service startup. Issue #3440.
+			require.Eventually(t, func() bool {
+				return slices.Contains(h1.Mux().Protocols(), holepunch.Protocol)
+			}, 5*time.Second, 10*time.Millisecond, "holepunch protocol never registered on h1")
+
 			require.NoError(t, h1.Connect(context.Background(), peer.AddrInfo{
 				ID:    h2.ID(),
 				Addrs: h2.Addrs(),
 			}))
+
+			// After Connect, h2 learns about h1's protocols via the identify
+			// exchange, which happens asynchronously. h2.NewStream below
+			// relies on h2 already knowing h1 supports the holepunch
+			// protocol, so wait for the identify-driven peerstore update.
+			require.Eventually(t, func() bool {
+				protos, err := h2.Peerstore().GetProtocols(h1.ID())
+				if err != nil {
+					return false
+				}
+				return slices.Contains(protos, holepunch.Protocol)
+			}, 5*time.Second, 10*time.Millisecond, "h2 never observed holepunch protocol on h1 after identify")
 
 			s, err := h2.NewStream(network.WithAllowLimitedConn(context.Background(), "holepunch"), h1.ID(), holepunch.Protocol)
 			require.NoError(t, err)
