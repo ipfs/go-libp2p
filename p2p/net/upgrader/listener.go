@@ -151,6 +151,11 @@ func (l *listener) Accept() (transport.CapableConn, error) {
 		if !c.IsClosed() {
 			return c, nil
 		}
+		// Nothing else owns this conn now, so close it to release its
+		// resource scope. Do it in the background: Close can wait for a
+		// close already in flight (up to 5s with TLS), and the swarm calls
+		// Accept from a single loop.
+		go c.Close()
 	}
 	if strings.Contains(l.err.Error(), "use of closed network connection") {
 		return nil, transport.ErrListenerClosed
