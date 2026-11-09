@@ -34,7 +34,7 @@ calculate_hash() {
   # Download the specified version of protobuf
   download_url="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VERSION}/${protoc_zip}"
   echo "Downloading from: ${download_url}"
-  curl -LO "${download_url}"
+  curl --fail --retry 5 -LO "${download_url}"
 
   # Calculate the SHA-256 hash
   if command -v shasum >/dev/null 2>&1; then
