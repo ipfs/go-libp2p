@@ -473,6 +473,11 @@ func (s *Swarm) CanDial(p peer.ID, addr ma.Multiaddr) bool {
 
 func (s *Swarm) nonProxyAddr(addr ma.Multiaddr) bool {
 	t := s.TransportForDialing(addr)
+	if t == nil {
+		// No transport can dial this address (for example, the swarm was
+		// closed): it is not a candidate for a direct dial.
+		return false
+	}
 	return !t.Proxy()
 }
 
