@@ -41,7 +41,7 @@ esac
 # Download the specified version of protobuf
 DOWNLOAD_URL="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VERSION}/${PROTOC_ZIP}"
 echo "Downloading from: ${DOWNLOAD_URL}" >&2
-curl -LO "${DOWNLOAD_URL}"
+curl --fail --retry 5 -LO "${DOWNLOAD_URL}"
 
 # Verify checksum
 EXPECTED_SHA256="${SHA256_HASHES[${PLATFORM}]}"
