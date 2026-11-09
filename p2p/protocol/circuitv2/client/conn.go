@@ -113,6 +113,7 @@ func (c *Conn) RemoteAddr() net.Addr {
 var _ network.ConnStat = (*Conn)(nil)
 
 func (c *Conn) Stat() network.ConnStats {
+	c.stat.Limited = true
 	return c.stat
 }
 
