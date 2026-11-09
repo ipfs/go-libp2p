@@ -478,6 +478,9 @@ type netrouteSourceIPSelector struct {
 }
 
 func (s *netrouteSourceIPSelector) PreferredSourceIPForDestination(dst *net.UDPAddr) (net.IP, error) {
+	if s.routes == nil {
+		return nil, errors.New("quicreuse: no route table available")
+	}
 	_, _, src, err := s.routes.Route(dst.IP)
 	return src, err
 }

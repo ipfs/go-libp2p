@@ -2,6 +2,7 @@ package quicreuse
 
 import (
 	"bytes"
+	"errors"
 	"net"
 	"os"
 	"runtime/pprof"
@@ -237,4 +238,92 @@ func TestReuseGarbageCollect(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	require.Eventually(t, func() bool { return numGlobals() == 0 }, 4*garbageCollectInterval, 10*time.Millisecond)
+}
+
+// TestDefaultSourceIPSelectorReturnsNilOnRouterFailure verifies that
+// defaultSourceIPSelectorFn returns an untyped nil when netroute.New() fails,
+// instead of a non-nil wrapper around a nil router. See issue #3537.
+func TestDefaultSourceIPSelectorReturnsNilOnRouterFailure(t *testing.T) {
+	// On platforms where netroute.New() succeeds, the result must be non-nil.
+	// On platforms where it fails (e.g. unprivileged Android), it must be untyped nil.
+	selector, err := defaultSourceIPSelectorFn()
+	if err != nil {
+		// netroute.New() failed. The selector must be nil (untyped),
+		// so that callers guarding with `if selector != nil` skip it correctly.
+		require.Nil(t, selector, "expected untyped nil when router is unavailable, got non-nil wrapper")
+	} else {
+		require.NotNil(t, selector)
+	}
+}
+
+// TestNetrouteSourceIPSelectorNilRoutesVerifies that the defensive nil check
+// in PreferredSourceIPForDestination prevents a nil-pointer panic when the
+// struct is constructed with a nil routes field. See issue #3537.
+func TestNetrouteSourceIPSelectorNilRoutes(t *testing.T) {
+	s := &netrouteSourceIPSelector{routes: nil}
+	_, err := s.PreferredSourceIPForDestination(&net.UDPAddr{IP: net.IPv4(1, 1, 1, 1), Port: 443})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no route table available")
+}
+
+// TestTransportWithAssociationForDialNoPanicWhenRoutesNil simulates the Android
+// scenario where netroute.New() fails, causing the sourceIPSelectorFn to return
+// (nil, err). r.routes must be nil so that the existing nil guard in
+// TransportWithAssociationForDial skips the router instead of panicking. See #3537.
+func TestTransportWithAssociationForDialNoPanicWhenRoutesNil(t *testing.T) {
+	reuse := newReuse(nil, nil, defaultListenUDP, func() (SourceIPSelector, error) {
+		// Simulate netroute.New() failing on Android:
+		// return untyped nil so the nil guard works correctly.
+		return nil, errors.New("simulated route table failure")
+	}, nil, nil)
+	cleanup(t, reuse)
+
+	// A unicast (non-unspecified) listener is required so that TransportForListen
+	// actually invokes sourceIPSelectorFn and assigns its result to r.routes.
+	laddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	_, err = reuse.TransportForListen("udp4", laddr)
+	require.NoError(t, err)
+
+	// Before the fix this panicked with a nil pointer dereference on
+	// s.routes.Route() because r.routes held a non-nil wrapper around a nil router.
+	// With the fix, r.routes is nil, so the guard skips the router.
+	raddr, err := net.ResolveUDPAddr("udp4", "1.1.1.1:1234")
+	require.NoError(t, err)
+	tr, err := reuse.TransportWithAssociationForDial(nil, "udp4", raddr)
+	require.NoError(t, err)
+	require.NotNil(t, tr)
+
+	// Without a usable source IP route, the unicast listener cannot be selected,
+	// so a fresh dialer bound to 0.0.0.0 is created. This is the expected
+	// degraded (no source-IP affinity) behaviour, not a failure.
+}
+
+// TestTransportWithAssociationForDialNoPanicWhenSelectorReturnsNilWrapper
+// verifies the defensive check inside PreferredSourceIPForDestination.
+// Even if a selector returns a non-nil wrapper around a nil router (the original
+// bug scenario, reachable via OverrideSourceIPSelector), the method must return
+// an error rather than panicking. See #3537.
+func TestTransportWithAssociationForDialNoPanicWhenSelectorReturnsNilWrapper(t *testing.T) {
+	reuse := newReuse(nil, nil, defaultListenUDP, func() (SourceIPSelector, error) {
+		// Simulate the original bug: a non-nil wrapper around a nil router.
+		return &netrouteSourceIPSelector{routes: nil}, nil
+	}, nil, nil)
+	cleanup(t, reuse)
+
+	// A unicast (non-unspecified) listener is required so that TransportForListen
+	// assigns the bad wrapper to r.routes, exercising the buggy path.
+	laddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	_, err = reuse.TransportForListen("udp4", laddr)
+	require.NoError(t, err)
+
+	// Before the fix this panicked on s.routes.Route(dst.IP). After the fix,
+	// PreferredSourceIPForDestination returns an error, so the router is skipped
+	// and a fresh global dialer is used instead of panicking.
+	raddr, err := net.ResolveUDPAddr("udp4", "1.1.1.1:1234")
+	require.NoError(t, err)
+	tr, err := reuse.TransportWithAssociationForDial(nil, "udp4", raddr)
+	require.NoError(t, err)
+	require.NotNil(t, tr)
 }

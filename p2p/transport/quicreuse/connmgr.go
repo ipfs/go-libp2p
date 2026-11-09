@@ -85,7 +85,10 @@ func defaultListenUDP(network string, laddr *net.UDPAddr) (net.PacketConn, error
 
 func defaultSourceIPSelectorFn() (SourceIPSelector, error) {
 	r, err := netroute.New()
-	return &netrouteSourceIPSelector{routes: r}, err
+	if err != nil {
+		return nil, err // return untyped nil so callers that guard on nil are correct
+	}
+	return &netrouteSourceIPSelector{routes: r}, nil
 }
 
 const (
