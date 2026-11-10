@@ -2,8 +2,6 @@ package libp2ptls
 
 import (
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -15,6 +13,7 @@ import (
 	"math/big"
 	"os"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	ic "github.com/libp2p/go-libp2p/core/crypto"
@@ -29,6 +28,15 @@ const alpn string = "libp2p"
 var extensionID = getPrefixedExtensionID([]int{1, 1})
 var extensionCritical bool // so we can mark the extension critical in tests
 
+// CertManager defines an interface for TLS certificate management operations
+type CertManager interface {
+	// CreateCertificate generates a certificate using the provided private key and template
+	CreateCertificate(privateKey ic.PrivKey, template *x509.Certificate) (*tls.Certificate, error)
+
+	// VerifyCertChain verifies the certificate chain and extracts the public key
+	VerifyCertChain(chain []*x509.Certificate) (ic.PubKey, error)
+}
+
 type signedKey struct {
 	PubKey    []byte
 	Signature []byte
@@ -36,13 +44,15 @@ type signedKey struct {
 
 // Identity is used to secure connections
 type Identity struct {
-	config tls.Config
+	config      tls.Config
+	certManager CertManager
 }
 
 // IdentityConfig is used to configure an Identity
 type IdentityConfig struct {
 	CertTemplate *x509.Certificate
 	KeyLogWriter io.Writer
+	CertManager  CertManager
 }
 
 // IdentityOption transforms an IdentityConfig to apply optional settings.
@@ -52,6 +62,13 @@ type IdentityOption func(r *IdentityConfig)
 func WithCertTemplate(template *x509.Certificate) IdentityOption {
 	return func(c *IdentityConfig) {
 		c.CertTemplate = template
+	}
+}
+
+// WithCertManager sets a custom certificate manager
+func WithCertManager(cm CertManager) IdentityOption {
+	return func(c *IdentityConfig) {
+		c.CertManager = cm
 	}
 }
 
@@ -74,19 +91,26 @@ func NewIdentity(privKey ic.PrivKey, opts ...IdentityOption) (*Identity, error) 
 		opt(&config)
 	}
 
-	var err error
+	// Use default cert manager if none provided
+	if config.CertManager == nil {
+		config.CertManager = &DefaultCertManager{}
+	}
+
 	if config.CertTemplate == nil {
+		var err error
 		config.CertTemplate, err = certTemplate()
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	cert, err := keyToCertificate(privKey, config.CertTemplate)
+	cert, err := config.CertManager.CreateCertificate(privKey, config.CertTemplate)
 	if err != nil {
 		return nil, err
 	}
+
 	return &Identity{
+		certManager: config.CertManager,
 		config: tls.Config{
 			MinVersion:         tls.VersionTLS13,
 			InsecureSkipVerify: true, // This is not insecure here. We will verify the cert chain ourselves.
@@ -100,6 +124,12 @@ func NewIdentity(privKey ic.PrivKey, opts ...IdentityOption) (*Identity, error) 
 			KeyLogWriter:           config.KeyLogWriter,
 		},
 	}, nil
+}
+
+// CertManager returns the certificate manager used by the identity
+// to create and verify certificates.
+func (i *Identity) CertManager() CertManager {
+	return i.certManager
 }
 
 // ConfigForPeer creates a new single-use tls.Config that verifies the peer's
@@ -136,10 +166,11 @@ func (i *Identity) ConfigForPeer(remote peer.ID) (*tls.Config, <-chan ic.PubKey)
 			chain[i] = cert
 		}
 
-		pubKey, err := PubKeyFromCertChain(chain)
+		pubKey, err := i.certManager.VerifyCertChain(chain)
 		if err != nil {
 			return err
 		}
+
 		if remote != "" && !remote.MatchesPublicKey(pubKey) {
 			peerID, err := peer.IDFromPublicKey(pubKey)
 			if err != nil {
@@ -154,7 +185,7 @@ func (i *Identity) ConfigForPeer(remote peer.ID) (*tls.Config, <-chan ic.PubKey)
 }
 
 // PubKeyFromCertChain verifies the certificate chain and extract the remote's public key.
-func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
+func (m *DefaultCertManager) VerifyCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	if len(chain) != 1 {
 		return nil, errors.New("expected one certificates in the chain")
 	}
@@ -168,13 +199,11 @@ func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 		if extensionIDEqual(ext.Id, extensionID) {
 			keyExt = ext
 			found = true
-			for i, oident := range cert.UnhandledCriticalExtensions {
-				if oident.Equal(ext.Id) {
-					// delete the extension from UnhandledCriticalExtensions
-					cert.UnhandledCriticalExtensions = append(cert.UnhandledCriticalExtensions[:i], cert.UnhandledCriticalExtensions[i+1:]...)
-					break
-				}
-			}
+			//delete the extension from UnhandledCriticalExtensions
+			cert.UnhandledCriticalExtensions = slices.DeleteFunc(cert.UnhandledCriticalExtensions, func(oid asn1.ObjectIdentifier) bool {
+				return oid.Equal(ext.Id)
+			})
+
 			break
 		}
 	}
@@ -206,6 +235,7 @@ func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	if !valid {
 		return nil, errors.New("signature invalid")
 	}
+
 	return pubKey, nil
 }
 
@@ -234,32 +264,6 @@ func GenerateSignedExtension(sk ic.PrivKey, pubKey crypto.PublicKey) (pkix.Exten
 	}
 
 	return pkix.Extension{Id: extensionID, Critical: extensionCritical, Value: value}, nil
-}
-
-// keyToCertificate generates a new ECDSA private key and corresponding x509 certificate.
-// The certificate includes an extension that cryptographically ties it to the provided libp2p
-// private key to authenticate TLS connections.
-func keyToCertificate(sk ic.PrivKey, certTmpl *x509.Certificate) (*tls.Certificate, error) {
-	certKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-
-	// after calling CreateCertificate, these will end up in Certificate.Extensions
-	extension, err := GenerateSignedExtension(sk, certKey.Public())
-	if err != nil {
-		return nil, err
-	}
-	certTmpl.ExtraExtensions = append(certTmpl.ExtraExtensions, extension)
-
-	certDER, err := x509.CreateCertificate(rand.Reader, certTmpl, certTmpl, certKey.Public(), certKey)
-	if err != nil {
-		return nil, err
-	}
-	return &tls.Certificate{
-		Certificate: [][]byte{certDER},
-		PrivateKey:  certKey,
-	}, nil
 }
 
 // certTemplate returns the template for generating an Identity's TLS certificates.

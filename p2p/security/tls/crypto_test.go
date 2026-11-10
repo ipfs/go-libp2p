@@ -94,7 +94,7 @@ func TestVectors(t *testing.T) {
 
 			cert, err := x509.ParseCertificate(data)
 			require.NoError(t, err)
-			key, err := PubKeyFromCertChain([]*x509.Certificate{cert})
+			key, err := (&DefaultCertManager{}).VerifyCertChain([]*x509.Certificate{cert})
 			if tc.error != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.error)
