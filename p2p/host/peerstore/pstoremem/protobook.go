@@ -61,13 +61,16 @@ func NewProtoBook(opts ...ProtoBookOption) (*memoryProtoBook, error) {
 }
 
 func (pb *memoryProtoBook) SetProtocols(p peer.ID, protos ...protocol.ID) error {
-	if len(protos) > pb.maxProtos {
+	if pb.maxProtos < 0 {
 		return errTooManyProtocols
 	}
 
-	newprotos := make(map[protocol.ID]struct{}, len(protos))
+	newprotos := make(map[protocol.ID]struct{})
 	for _, proto := range protos {
 		newprotos[proto] = struct{}{}
+		if len(newprotos) > pb.maxProtos {
+			return errTooManyProtocols
+		}
 	}
 
 	s := pb.segments.get(p)
@@ -83,16 +86,24 @@ func (pb *memoryProtoBook) AddProtocols(p peer.ID, protos ...protocol.ID) error 
 	s.Lock()
 	defer s.Unlock()
 
-	protomap, ok := s.protocols[p]
-	if !ok {
-		protomap = make(map[protocol.ID]struct{})
-		s.protocols[p] = protomap
-	}
-	if len(protomap)+len(protos) > pb.maxProtos {
+	protomap := s.protocols[p]
+	if len(protomap) > pb.maxProtos {
 		return errTooManyProtocols
 	}
-
+	newprotos := make(map[protocol.ID]struct{})
 	for _, proto := range protos {
+		if _, exists := protomap[proto]; !exists {
+			newprotos[proto] = struct{}{}
+		}
+		if len(protomap)+len(newprotos) > pb.maxProtos {
+			return errTooManyProtocols
+		}
+	}
+	if protomap == nil {
+		protomap = make(map[protocol.ID]struct{}, len(newprotos))
+		s.protocols[p] = protomap
+	}
+	for proto := range newprotos {
 		protomap[proto] = struct{}{}
 	}
 	return nil
