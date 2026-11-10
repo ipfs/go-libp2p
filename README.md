@@ -135,7 +135,6 @@ Some notable users of go-libp2p are:
 - [Berty](https://github.com/berty/berty) - An open, secure, offline-first, peer-to-peer and zero trust messaging app.
 - [Wasp](https://github.com/iotaledger/wasp) - A node that runs IOTA Smart Contracts built by the [IOTA Foundation](https://www.iota.org/)
 - [Mina](https://github.com/minaprotocol/mina) - A lightweight, constant-sized blockchain that runs zero-knowledge smart contracts
-- [Polygon Edge](https://github.com/0xPolygon/polygon-edge) - A modular, extensible framework for building Ethereum compatible networks
 - [Celestia Node](https://github.com/celestiaorg/celestia-node) - The Go implementation of Celestia's data availability nodes
 - [Status go](https://github.com/status-im/status-go) - Status bindings for go-ethereum, built by [Status.im](https://status.im/)
 - [Flow](https://github.com/onflow/flow-go) - A blockchain built to support games, apps, and digital assets built by [Dapper Labs](https://www.dapperlabs.com/)
