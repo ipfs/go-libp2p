@@ -636,3 +636,58 @@ func TestAutoRelayAddrsEvent(t *testing.T) {
 	case <-time.After(1 * time.Second):
 	}
 }
+
+func TestConnectOnRefreshFailure(t *testing.T) {
+	cl := newMockClock()
+	// Reservation expirations come from the relay's wall clock, so start the mock clock there.
+	cl.AdvanceBy(time.Since(cl.Now()))
+
+	const num = 3
+	peerChan := make(chan peer.AddrInfo, num)
+	relays := make([]host.Host, 0, num)
+	for range num {
+		r := newRelay(t)
+		t.Cleanup(func() { r.Close() })
+		peerChan <- peer.AddrInfo{ID: r.ID(), Addrs: r.Addrs()}
+		relays = append(relays, r)
+	}
+	h := newPrivateNode(t,
+		func(context.Context, int) <-chan peer.AddrInfo { return peerChan },
+		autorelay.WithMinCandidates(1),
+		autorelay.WithMaxCandidates(num),
+		autorelay.WithNumRelays(1),
+		autorelay.WithBootDelay(0),
+		autorelay.WithMinInterval(time.Hour),
+		autorelay.WithMaxCandidateAge(2*time.Hour),
+		autorelay.WithClock(cl),
+	)
+	defer h.Close()
+
+	require.Eventually(t, func() bool { return numRelays(h) > 0 }, 10*time.Second, 100*time.Millisecond)
+	relaysInUse := usedRelays(h)
+	require.Len(t, relaysInUse, 1)
+	oldRelay := relaysInUse[0]
+
+	// The old relay stays connected but stops serving reservations, e.g. because
+	// its relay service was disabled. The next reservation refresh fails.
+	for _, r := range relays {
+		if r.ID() == oldRelay {
+			r.RemoveStreamHandler(protoIDv2)
+		}
+	}
+	// Reservations are valid for 1 hour and refreshed 2 minutes before expiry.
+	for range 65 {
+		cl.AdvanceBy(time.Minute)
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Eventually(t, func() bool {
+		return !slices.Contains(usedRelays(h), oldRelay)
+	}, 10*time.Second, 100*time.Millisecond, "refresh with the old relay should have failed")
+	require.Equal(t, network.Connected, h.Network().Connectedness(oldRelay))
+
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		relaysInUse = usedRelays(h)
+		require.Len(collect, relaysInUse, 1)
+		assert.NotEqualf(collect, oldRelay, relaysInUse[0], "old relay should not be used again")
+	}, 10*time.Second, 100*time.Millisecond, "should have reserved a slot with one of the remaining candidates")
+}

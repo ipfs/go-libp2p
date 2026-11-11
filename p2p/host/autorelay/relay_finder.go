@@ -708,6 +708,10 @@ func (rf *relayFinder) refreshRelayReservation(ctx context.Context, p peer.ID) e
 		delete(rf.relays, p)
 		// unprotect the connection
 		rf.host.ConnManager().Unprotect(p, autorelayTag)
+		if exists {
+			rf.notifyMaybeConnectToRelay()
+			rf.notifyMaybeNeedNewCandidates()
+		}
 		rf.relayMx.Unlock()
 		if exists {
 			rf.metricsTracer.ReservationEnded(1)
