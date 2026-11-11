@@ -188,7 +188,11 @@ func (d *BackoffDiscovery) FindPeers(ctx context.Context, ns string, opts ...dis
 	}
 	c.sendingChs[evtCh] = options.Limit
 
-	go findPeerReceiver(ctx, pch, evtCh, rcvPeers)
+	go findPeerReceiver(ctx, pch, evtCh, rcvPeers, func() {
+		c.mux.Lock()
+		delete(c.sendingChs, evtCh)
+		c.mux.Unlock()
+	})
 
 	return pch, nil
 }
@@ -251,7 +255,7 @@ func findPeerDispatcher(ctx context.Context, c *backoffCache, pch <-chan peer.Ad
 	}
 }
 
-func findPeerReceiver(ctx context.Context, pch, evtCh chan peer.AddrInfo, rcvPeers []peer.AddrInfo) {
+func findPeerReceiver(ctx context.Context, pch, evtCh chan peer.AddrInfo, rcvPeers []peer.AddrInfo, cleanup func()) {
 	defer close(pch)
 
 	for {
@@ -285,6 +289,7 @@ func findPeerReceiver(ctx context.Context, pch, evtCh chan peer.AddrInfo, rcvPee
 				return
 			}
 		case <-ctx.Done():
+			cleanup()
 			return
 		}
 	}
