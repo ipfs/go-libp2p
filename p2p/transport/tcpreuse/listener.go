@@ -109,19 +109,19 @@ func (t *ConnMgr) DemultiplexedListen(laddr ma.Multiaddr, connType Demultiplexed
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancelFunc := func() error {
-		cancel()
+	removeFunc := func() error {
 		t.mx.Lock()
 		defer t.mx.Unlock()
 		delete(t.listeners, laddr.String())
 		delete(t.listeners, gmal.Multiaddr().String())
-		return gmal.Close()
+		return nil
 	}
 	ml = &multiplexedListener{
 		GatedMaListener: gmal,
 		listeners:       make(map[DemultiplexedConnType]*demultiplexedListener),
 		ctx:             ctx,
-		closeFn:         cancelFunc,
+		cancel:          cancel,
+		closeFn:         removeFunc,
 	}
 	t.listeners[laddr.String()] = ml
 	t.listeners[gmal.Multiaddr().String()] = ml
@@ -146,8 +146,12 @@ type multiplexedListener struct {
 	mx        sync.RWMutex
 
 	ctx     context.Context
+	cancel  context.CancelFunc
 	closeFn func() error
 	wg      sync.WaitGroup
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 var ErrListenerExists = errors.New("listener already exists for this conn type on this address")
@@ -159,6 +163,9 @@ func (m *multiplexedListener) DemultiplexedListen(connType DemultiplexedConnType
 
 	m.mx.Lock()
 	defer m.mx.Unlock()
+	if m.ctx.Err() != nil {
+		return nil, transport.ErrListenerClosed
+	}
 	if _, ok := m.listeners[connType]; ok {
 		return nil, ErrListenerExists
 	}
@@ -249,14 +256,20 @@ func (m *multiplexedListener) run() error {
 }
 
 func (m *multiplexedListener) Close() error {
-	m.mx.Lock()
-	for _, l := range m.listeners {
-		l.cancelFunc()
-	}
-	err := m.closeListener()
-	m.mx.Unlock()
-	m.wg.Wait()
-	return err
+	m.closeOnce.Do(func() {
+		m.mx.Lock()
+		m.cancel()
+		for _, l := range m.listeners {
+			l.cancelFunc()
+		}
+		m.mx.Unlock()
+
+		// closeFn acquires the ConnMgr lock. Call it without holding m.mx,
+		// since DemultiplexedListen acquires those locks in the opposite order.
+		m.closeErr = m.closeListener()
+		m.wg.Wait()
+	})
+	return m.closeErr
 }
 
 func (m *multiplexedListener) closeListener() error {
@@ -267,14 +280,11 @@ func (m *multiplexedListener) closeListener() error {
 
 func (m *multiplexedListener) removeDemultiplexedListener(c DemultiplexedConnType) {
 	m.mx.Lock()
-	defer m.mx.Unlock()
-
 	delete(m.listeners, c)
-	if len(m.listeners) == 0 {
-		m.closeListener()
-		m.mx.Unlock()
-		m.wg.Wait()
-		m.mx.Lock()
+	empty := len(m.listeners) == 0
+	m.mx.Unlock()
+	if empty {
+		_ = m.Close()
 	}
 }
 

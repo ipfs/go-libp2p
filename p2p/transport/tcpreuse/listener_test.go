@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -65,6 +66,94 @@ var _ manet.Listener = &maListener{}
 func (ml *maListener) Accept() (manet.Conn, error) {
 	c, _, err := ml.GatedMaListener.Accept()
 	return c, err
+}
+
+type blockingCloseGatedMaListener struct {
+	transport.GatedMaListener
+	closeStarted  chan struct{}
+	continueClose chan struct{}
+}
+
+func (l *blockingCloseGatedMaListener) Close() error {
+	close(l.closeStarted)
+	<-l.continueClose
+	return l.GatedMaListener.Close()
+}
+
+func TestConcurrentListenAndCloseDoesNotDeadlock(t *testing.T) {
+	cm := NewConnMgr(false, upgrader(t))
+	listenAddr := ma.StringCast("/ip4/127.0.0.1/tcp/0")
+	gmal, err := cm.gatedMaListen(listenAddr)
+	require.NoError(t, err)
+
+	closeStarted := make(chan struct{})
+	continueClose := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	ml := &multiplexedListener{
+		GatedMaListener: &blockingCloseGatedMaListener{
+			GatedMaListener: gmal,
+			closeStarted:    closeStarted,
+			continueClose:   continueClose,
+		},
+		listeners: make(map[DemultiplexedConnType]*demultiplexedListener),
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+	ml.closeFn = func() error {
+		cm.mx.Lock()
+		defer cm.mx.Unlock()
+		delete(cm.listeners, listenAddr.String())
+		delete(cm.listeners, gmal.Multiaddr().String())
+		return nil
+	}
+	cm.mx.Lock()
+	cm.listeners[listenAddr.String()] = ml
+	cm.listeners[gmal.Multiaddr().String()] = ml
+	cm.mx.Unlock()
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- ml.Close() }()
+	<-closeStarted // Pause closure while starting a concurrent listener registration.
+
+	listenDone := make(chan error, 1)
+	go func() {
+		_, err := cm.DemultiplexedListen(gmal.Multiaddr(), DemultiplexedConnType_HTTP)
+		listenDone <- err
+	}()
+
+	// On the buggy path, DemultiplexedListen holds cm.mx and blocks on ml.mx.
+	// With the fix, it may instead observe the canceled listener and return.
+	var listenErr error
+	listenReturned := false
+	require.Eventually(t, func() bool {
+		select {
+		case listenErr = <-listenDone:
+			listenReturned = true
+			return true
+		default:
+		}
+		if cm.mx.TryLock() {
+			cm.mx.Unlock()
+			return false
+		}
+		return true
+	}, time.Second, time.Millisecond)
+	close(continueClose)
+
+	select {
+	case err := <-closeDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("multiplexed listener Close deadlocked with DemultiplexedListen")
+	}
+	if !listenReturned {
+		select {
+		case listenErr = <-listenDone:
+		case <-time.After(time.Second):
+			t.Fatal("DemultiplexedListen deadlocked with multiplexed listener Close")
+		}
+	}
+	require.True(t, listenErr == nil || errors.Is(listenErr, transport.ErrListenerClosed), listenErr)
 }
 
 type wsHandler struct{ conns chan *websocket.Conn }
