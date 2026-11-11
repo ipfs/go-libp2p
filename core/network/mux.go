@@ -121,7 +121,7 @@ type MuxedStream interface {
 // connection that has been "upgraded" to support the libp2p capabilities
 // of secure communication and stream multiplexing.
 type MuxedConn interface {
-	// Close closes the stream muxer and the the underlying net.Conn.
+	// Close closes the stream muxer and the underlying net.Conn.
 	io.Closer
 
 	// CloseWithError closes the connection with errCode. The errCode is sent

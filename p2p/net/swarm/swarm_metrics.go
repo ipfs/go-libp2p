@@ -229,7 +229,7 @@ func (m *metricsTracer) CompletedHandshake(t time.Duration, cs network.Connectio
 func (m *metricsTracer) FailedDialing(addr ma.Multiaddr, dialErr error, cause error) {
 	transport := metricshelper.GetTransport(addr)
 	e := "other"
-	// dial deadline exceeded or the the parent contexts deadline exceeded
+	// dial deadline exceeded or the parent contexts deadline exceeded
 	if errors.Is(dialErr, context.DeadlineExceeded) || errors.Is(cause, context.DeadlineExceeded) {
 		e = "deadline"
 	} else if errors.Is(dialErr, context.Canceled) {
