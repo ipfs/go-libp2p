@@ -164,3 +164,15 @@ func TestAddrInfoJSON(t *testing.T) {
 		t.Fatalf("expected addrs to match %v, got %v", maddrFull, addrInfo.Addrs)
 	}
 }
+
+func TestAddrInfoJSONEmptyID(t *testing.T) {
+	ai := AddrInfo{Addrs: []ma.Multiaddr{maddrTpt}}
+	out, err := ai.MarshalJSON()
+	require.NoError(t, err)
+
+	var addrInfo AddrInfo
+	require.NoError(t, addrInfo.UnmarshalJSON(out))
+	require.Equal(t, ID(""), addrInfo.ID)
+	require.Len(t, addrInfo.Addrs, 1)
+	require.True(t, addrInfo.Addrs[0].Equal(maddrTpt))
+}

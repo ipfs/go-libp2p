@@ -10,7 +10,7 @@ import (
 
 // Helper struct for decoding as we can't unmarshal into an interface (Multiaddr).
 type addrInfoJson struct {
-	ID    ID
+	ID    ID `json:",omitempty"`
 	Addrs []string
 }
 
