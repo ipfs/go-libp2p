@@ -177,6 +177,21 @@ func NewResourceManager(limits Limiter, opts ...Option) (network.ResourceManager
 	}
 	r.verifySourceAddressRateLimiter = newVerifySourceAddressRateLimiter(r.connLimiter)
 
+	if r.trace == nil {
+		r.trace = &trace{}
+	}
+	// Use the default log reporter unless the caller supplied one.
+	hasLogReporter := false
+	for _, reporter := range r.trace.reporters {
+		switch reporter.(type) {
+		case LogReporter, *LogReporter:
+			hasLogReporter = true
+		}
+	}
+	if !hasLogReporter {
+		r.trace.reporters = append(r.trace.reporters, NewLogReporter(nil))
+	}
+
 	if !r.disableMetrics {
 		sr, err := NewStatsTraceReporter()
 		if err != nil {
@@ -185,9 +200,6 @@ func NewResourceManager(limits Limiter, opts ...Option) (network.ResourceManager
 			// Report system limits to Prometheus
 			sr.ReportSystemLimits(limits)
 
-			if r.trace == nil {
-				r.trace = &trace{}
-			}
 			found := false
 			for _, rep := range r.trace.reporters {
 				// Compare the actual reporter, not the interface
