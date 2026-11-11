@@ -251,8 +251,8 @@ func (rf *relayFinder) getCircuitAddrs() []ma.Multiaddr {
 	defer rf.relayMx.Unlock()
 
 	raddrs := make([]ma.Multiaddr, 0, 4*len(rf.relays)+4)
-	for p := range rf.relays {
-		addrs := cleanupAddressSet(rf.host.Peerstore().Addrs(p))
+	for p, rsvp := range rf.relays {
+		addrs := rsvp.Addrs
 		circuit := ma.StringCast(fmt.Sprintf("/p2p/%s/p2p-circuit", p))
 		for _, addr := range addrs {
 			pub := addr.Encapsulate(circuit)
@@ -830,4 +830,21 @@ func areSortedAddrsDifferent(a, b []ma.Multiaddr) bool {
 		}
 	}
 	return false
+}
+
+// isRelayAddr returns true if the multiaddr contains the /p2p-circuit component.
+func isRelayAddr(a ma.Multiaddr) bool {
+	isRelay := false
+
+	ma.ForEach(a, func(c ma.Component) bool {
+		switch c.Protocol().Code {
+		case ma.P_CIRCUIT:
+			isRelay = true
+			return false
+		default:
+			return true
+		}
+	})
+
+	return isRelay
 }
