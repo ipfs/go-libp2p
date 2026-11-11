@@ -25,6 +25,10 @@ type trace struct {
 	done          bool
 	pendingWrites []any
 	reporters     []TraceReporter
+
+	// needEventMetadata is true when Time and Scope can be observed: the trace
+	// file needs them, and so does any reporter from outside this package.
+	needEventMetadata bool
 }
 
 type TraceReporter interface {
@@ -217,9 +221,11 @@ func (t *trace) push(evt TraceEvt) {
 	if t.done {
 		return
 	}
-	evt.Time = time.Now().Format(time.RFC3339Nano)
-	if evt.Name != "" {
-		evt.Scope = &scopeClass{name: evt.Name}
+	if t.needEventMetadata {
+		evt.Time = time.Now().Format(time.RFC3339Nano)
+		if evt.Name != "" {
+			evt.Scope = &scopeClass{name: evt.Name}
+		}
 	}
 
 	for _, reporter := range t.reporters {
@@ -312,6 +318,14 @@ func (t *trace) writeEvents(pend []any, jout *json.Encoder) error {
 func (t *trace) Start(limits Limiter) error {
 	if t == nil {
 		return nil
+	}
+
+	t.needEventMetadata = t.path != ""
+	for _, rep := range t.reporters {
+		if _, ok := rep.(StatsTraceReporter); !ok {
+			t.needEventMetadata = true
+			break
+		}
 	}
 
 	t.ctx, t.cancel = context.WithCancel(context.Background())
