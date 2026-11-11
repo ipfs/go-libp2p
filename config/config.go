@@ -41,14 +41,11 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
 	"github.com/libp2p/go-libp2p/p2p/security/insecure"
-	"github.com/libp2p/go-libp2p/p2p/transport/quicreuse"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcpreuse"
-	libp2pwebrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
 	"github.com/prometheus/client_golang/prometheus"
 
 	ma "github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
-	"github.com/quic-go/quic-go"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )
@@ -310,30 +307,13 @@ func (cfg *Config) addTransports() ([]fx.Option, error) {
 			}
 			return tcpreuse.NewConnMgr(tcpreuse.EnvReuseportVal, upgrader)
 		}),
-		fx.Provide(func(cm *quicreuse.ConnManager, sw *swarm.Swarm) libp2pwebrtc.ListenUDPFn {
-			hasQuicAddrPortFor := func(network string, laddr *net.UDPAddr) bool {
-				quicAddrPorts := map[string]struct{}{}
-				for _, addr := range sw.ListenAddresses() {
-					if _, err := addr.ValueForProtocol(ma.P_QUIC_V1); err == nil {
-						netw, addr, err := manet.DialArgs(addr)
-						if err != nil {
-							return false
-						}
-						quicAddrPorts[netw+"_"+addr] = struct{}{}
-					}
-				}
-				_, ok := quicAddrPorts[network+"_"+laddr.String()]
-				return ok
-			}
-
-			return func(network string, laddr *net.UDPAddr) (net.PacketConn, error) {
-				if hasQuicAddrPortFor(network, laddr) {
-					return cm.SharedNonQUICPacketConn(network, laddr)
-				}
-				return net.ListenUDP(network, laddr)
-			}
-		}),
 	}
+	
+	// Only add QUIC-related providers if QUIC or WebRTC transports might be used
+	// This avoids importing quic-go when only using TCP/WebSocket
+	fxopts = append(fxopts, provideQUICReuse(cfg))
+	fxopts = append(fxopts, provideWebRTCListenUDP())
+
 	fxopts = append(fxopts, cfg.Transports...)
 	if cfg.Insecure {
 		fxopts = append(fxopts,
@@ -383,47 +363,6 @@ func (cfg *Config) addTransports() ([]fx.Option, error) {
 				fx.ParamTags(`group:"security_unordered"`),
 				fx.ResultTags(`name:"security"`),
 			)))
-	}
-
-	fxopts = append(fxopts, fx.Provide(PrivKeyToStatelessResetKey))
-	fxopts = append(fxopts, fx.Provide(PrivKeyToTokenGeneratorKey))
-	if cfg.QUICReuse != nil {
-		fxopts = append(fxopts, cfg.QUICReuse...)
-	} else {
-		fxopts = append(fxopts,
-			fx.Provide(func(key quic.StatelessResetKey, tokenGenerator quic.TokenGeneratorKey, rcmgr network.ResourceManager, lifecycle fx.Lifecycle) (*quicreuse.ConnManager, error) {
-				opts := []quicreuse.Option{
-					quicreuse.ConnContext(func(ctx context.Context, clientInfo *quic.ClientInfo) (context.Context, error) {
-						// even if creating the quic maddr fails, let the rcmgr decide what to do with the connection
-						addr, err := quicreuse.ToQuicMultiaddr(clientInfo.RemoteAddr, quic.Version1)
-						if err != nil {
-							addr = nil
-						}
-						scope, err := rcmgr.OpenConnection(network.DirInbound, false, addr)
-						if err != nil {
-							return ctx, err
-						}
-						ctx = network.WithConnManagementScope(ctx, scope)
-						context.AfterFunc(ctx, func() {
-							scope.Done()
-						})
-						return ctx, nil
-					}),
-					quicreuse.VerifySourceAddress(func(addr net.Addr) bool {
-						return rcmgr.VerifySourceAddress(addr)
-					}),
-				}
-				if !cfg.DisableMetrics {
-					opts = append(opts, quicreuse.EnableMetrics(cfg.PrometheusRegisterer))
-				}
-				cm, err := quicreuse.NewConnManager(key, tokenGenerator, opts...)
-				if err != nil {
-					return nil, err
-				}
-				lifecycle.Append(fx.StopHook(cm.Close))
-				return cm, nil
-			}),
-		)
 	}
 
 	fxopts = append(fxopts, fx.Invoke(

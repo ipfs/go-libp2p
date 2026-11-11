@@ -13,11 +13,6 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	tls "github.com/libp2p/go-libp2p/p2p/security/tls"
-	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
-	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
-	libp2pwebrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
-	ws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
-	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/multiformats/go-multiaddr"
@@ -37,27 +32,6 @@ var DefaultSecurity = ChainOptions(
 // Use this option when you want to *extend* the set of multiplexers used by
 // libp2p instead of replacing them.
 var DefaultMuxers = Muxer(yamux.ID, yamux.DefaultTransport)
-
-// DefaultTransports are the default libp2p transports.
-//
-// Use this option when you want to *extend* the set of transports used by
-// libp2p instead of replacing them.
-var DefaultTransports = ChainOptions(
-	Transport(tcp.NewTCPTransport),
-	Transport(quic.NewTransport),
-	Transport(ws.New),
-	Transport(webtransport.New),
-	Transport(libp2pwebrtc.New),
-)
-
-// DefaultPrivateTransports are the default libp2p transports when a PSK is supplied.
-//
-// Use this option when you want to *extend* the set of transports used by
-// libp2p instead of replacing them.
-var DefaultPrivateTransports = ChainOptions(
-	Transport(tcp.NewTCPTransport),
-	Transport(ws.New),
-)
 
 // DefaultPeerstore configures libp2p to use the default peerstore.
 var DefaultPeerstore Option = func(cfg *Config) error {

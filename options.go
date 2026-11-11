@@ -27,7 +27,6 @@ import (
 	tptu "github.com/libp2p/go-libp2p/p2p/net/upgrader"
 	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
-	"github.com/libp2p/go-libp2p/p2p/transport/quicreuse"
 	"github.com/prometheus/client_golang/prometheus"
 
 	ma "github.com/multiformats/go-multiaddr"
@@ -99,33 +98,6 @@ func Muxer(name string, muxer network.Multiplexer) Option {
 	}
 }
 
-func QUICReuse(constructor any, opts ...quicreuse.Option) Option {
-	return func(cfg *Config) error {
-		tag := `group:"quicreuseopts"`
-		typ := reflect.ValueOf(constructor).Type()
-		numParams := typ.NumIn()
-		isVariadic := typ.IsVariadic()
-
-		if !isVariadic && len(opts) > 0 {
-			return errors.New("QUICReuse constructor doesn't take any options")
-		}
-
-		var params []string
-		if isVariadic && len(opts) > 0 {
-			// If there are options, apply the tag.
-			// Since options are variadic, they have to be the last argument of the constructor.
-			params = make([]string, numParams)
-			params[len(params)-1] = tag
-		}
-
-		cfg.QUICReuse = append(cfg.QUICReuse, fx.Provide(fx.Annotate(constructor, fx.ParamTags(params...))))
-		for _, opt := range opts {
-			cfg.QUICReuse = append(cfg.QUICReuse, fx.Supply(fx.Annotate(opt, fx.ResultTags(tag))))
-		}
-		return nil
-	}
-}
-
 // Transport configures libp2p to use the given transport (or transport
 // constructor).
 //
@@ -144,9 +116,7 @@ func QUICReuse(constructor any, opts ...quicreuse.Option) Option {
 func Transport(constructor any, opts ...any) Option {
 	return func(cfg *Config) error {
 		// generate a random identifier, so that fx can associate the constructor with its options
-		b := make([]byte, 8)
-		rand.Read(b)
-		id := binary.BigEndian.Uint64(b)
+		id := transportOptID()
 
 		tag := fmt.Sprintf(`group:"transportopt_%d"`, id)
 
