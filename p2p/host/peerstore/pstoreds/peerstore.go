@@ -136,9 +136,17 @@ func uniquePeerIds(ds ds.Datastore, prefix ds.Key, extractor func(result query.R
 
 	ids := make(peer.IDSlice, 0, len(idset))
 	for id := range idset {
-		pid, _ := base32.RawStdEncoding.DecodeString(id)
-		id, _ := peer.IDFromBytes(pid)
-		ids = append(ids, id)
+		pid, err := base32.RawStdEncoding.DecodeString(id)
+		if err != nil {
+			log.Debugf("failed to decode peer id %s from base32: %v; skipping", id, err)
+		        continue
+		}
+		peerID, err := peer.IDFromBytes(pid)
+		if err != nil {
+			log.Debugf("failed to create peer id from bytes for %s: %v; skipping", id, err)
+			continue
+		}
+		ids = append(ids, peerID)
 	}
 	return ids, nil
 }

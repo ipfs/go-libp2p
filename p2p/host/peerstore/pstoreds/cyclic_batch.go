@@ -28,7 +28,7 @@ func newCyclicBatch(ds ds.Batching, _ int) (ds.Batch, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &cyclicBatch{Batch: batch, ds: ds}, nil
+	return &cyclicBatch{Batch: batch, ds: ds, threshold: threshold}, nil
 }
 
 func (cb *cyclicBatch) cycle() (err error) {
