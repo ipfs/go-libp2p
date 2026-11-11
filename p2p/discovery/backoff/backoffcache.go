@@ -82,6 +82,11 @@ func (c realClock) Now() time.Time {
 	return time.Now()
 }
 
+type peerReceiver struct {
+	remaining int
+	done      <-chan struct{}
+}
+
 type backoffCache struct {
 	// strat is assigned on creation and not written to
 	strat BackoffStrategy
@@ -90,7 +95,7 @@ type backoffCache struct {
 	nextDiscover time.Time
 	prevPeers    map[peer.ID]peer.AddrInfo
 	peers        map[peer.ID]peer.AddrInfo
-	sendingChs   map[chan peer.AddrInfo]int
+	sendingChs   map[chan peer.AddrInfo]peerReceiver
 	ongoing      bool
 
 	clock clock
@@ -126,7 +131,7 @@ func (d *BackoffDiscovery) FindPeers(ctx context.Context, ns string, opts ...dis
 			nextDiscover: time.Time{},
 			prevPeers:    make(map[peer.ID]peer.AddrInfo),
 			peers:        make(map[peer.ID]peer.AddrInfo),
-			sendingChs:   make(map[chan peer.AddrInfo]int),
+			sendingChs:   make(map[chan peer.AddrInfo]peerReceiver),
 			strat:        d.stratFactory(),
 			clock:        d.clock,
 		}
@@ -186,7 +191,11 @@ func (d *BackoffDiscovery) FindPeers(ctx context.Context, ns string, opts ...dis
 	for _, ai := range c.peers {
 		rcvPeers = append(rcvPeers, ai)
 	}
-	c.sendingChs[evtCh] = options.Limit
+	remaining := options.Limit
+	if remaining == 0 {
+		remaining = -1 // An unlimited query must remain distinct from an exhausted limit.
+	}
+	c.sendingChs[evtCh] = peerReceiver{remaining: remaining, done: ctx.Done()}
 
 	go findPeerReceiver(ctx, pch, evtCh, rcvPeers)
 
@@ -210,7 +219,7 @@ func findPeerDispatcher(ctx context.Context, c *backoffCache, pch <-chan peer.Ad
 		for ch := range c.sendingChs {
 			close(ch)
 		}
-		c.sendingChs = make(map[chan peer.AddrInfo]int)
+		c.sendingChs = make(map[chan peer.AddrInfo]peerReceiver)
 		c.mux.Unlock()
 	}()
 
@@ -237,10 +246,21 @@ func findPeerDispatcher(ctx context.Context, c *backoffCache, pch <-chan peer.Ad
 
 			c.peers[ai.ID] = sendAi
 
-			for ch, rem := range c.sendingChs {
-				if rem > 0 {
-					ch <- sendAi
-					c.sendingChs[ch] = rem - 1
+			for ch, receiver := range c.sendingChs {
+				if receiver.remaining != 0 {
+					select {
+					case ch <- sendAi:
+						if receiver.remaining > 0 {
+							receiver.remaining--
+							c.sendingChs[ch] = receiver
+						}
+					case <-receiver.done:
+						delete(c.sendingChs, ch)
+						close(ch)
+					case <-ctx.Done():
+						c.mux.Unlock()
+						return
+					}
 				}
 			}
 
