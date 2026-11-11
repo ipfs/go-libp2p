@@ -251,6 +251,8 @@ func (hp *holePuncher) initiateHolePunchImpl(str network.Stream) ([]ma.Multiaddr
 	if hp.filter != nil {
 		addrs = hp.filter.FilterRemote(str.Conn().RemotePeer(), addrs)
 	}
+	// Dial only the public IPs the peer sent, after any AddrFilter.
+	addrs = filterHolePunchAddrs(addrs)
 
 	if len(addrs) == 0 {
 		return nil, nil, 0, errors.New("didn't receive any public addresses in CONNECT")

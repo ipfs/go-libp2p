@@ -345,6 +345,22 @@ func TestFailuresOnInitiator(t *testing.T) {
 				return []ma.Multiaddr{}
 			},
 		},
+		// A responder CONNECT with only non-public addresses leaves nothing to
+		// dial after the public-address gate, so the initiator aborts.
+		"responder sends only non-public addresses": {
+			errMsg: "didn't receive any public addresses in CONNECT",
+			rhandler: func(s network.Stream) {
+				pbio.NewDelimitedWriter(s).WriteMsg(&holepunch_pb.HolePunch{
+					Type: holepunch_pb.HolePunch_CONNECT.Enum(),
+					ObsAddrs: addrsToBytes([]ma.Multiaddr{
+						ma.StringCast("/ip4/127.0.0.1/tcp/1234"),
+						ma.StringCast("/ip4/192.168.1.1/tcp/443"),
+						ma.StringCast("/ip6/::1/tcp/1234"),
+					}),
+				})
+				time.Sleep(5 * time.Second)
+			},
+		},
 	}
 
 	for name, tc := range tcs {
@@ -447,7 +463,7 @@ func TestFailuresOnResponder(t *testing.T) {
 				w := pbio.NewDelimitedWriter(s)
 				w.WriteMsg(&holepunch_pb.HolePunch{
 					Type:     holepunch_pb.HolePunch_CONNECT.Enum(),
-					ObsAddrs: addrsToBytes([]ma.Multiaddr{ma.StringCast("/ip4/127.0.0.1/tcp/1234")}),
+					ObsAddrs: addrsToBytes([]ma.Multiaddr{ma.StringCast("/ip4/1.2.3.4/tcp/1234")}), // public: real DCUtR only exchanges public addrs
 				})
 				w.WriteMsg(&holepunch_pb.HolePunch{Type: holepunch_pb.HolePunch_CONNECT.Enum()})
 			},
@@ -458,7 +474,7 @@ func TestFailuresOnResponder(t *testing.T) {
 			initiator: func(s network.Stream) {
 				pbio.NewDelimitedWriter(s).WriteMsg(&holepunch_pb.HolePunch{
 					Type:     holepunch_pb.HolePunch_CONNECT.Enum(),
-					ObsAddrs: addrsToBytes([]ma.Multiaddr{ma.StringCast("/ip4/127.0.0.1/tcp/1234")}),
+					ObsAddrs: addrsToBytes([]ma.Multiaddr{ma.StringCast("/ip4/1.2.3.4/tcp/1234")}), // public: real DCUtR only exchanges public addrs
 				})
 				time.Sleep(10 * time.Second)
 			},
@@ -477,12 +493,44 @@ func TestFailuresOnResponder(t *testing.T) {
 			initiator: func(s network.Stream) {
 				pbio.NewDelimitedWriter(s).WriteMsg(&holepunch_pb.HolePunch{
 					Type:     holepunch_pb.HolePunch_CONNECT.Enum(),
-					ObsAddrs: addrsToBytes([]ma.Multiaddr{ma.StringCast("/ip4/127.0.0.1/tcp/1234")}),
+					ObsAddrs: addrsToBytes([]ma.Multiaddr{ma.StringCast("/ip4/1.2.3.4/tcp/1234")}),
 				})
 				time.Sleep(10 * time.Second)
 			},
 			filter: func(_ peer.ID, _ []ma.Multiaddr) []ma.Multiaddr {
 				return []ma.Multiaddr{}
+			},
+		},
+		// An AddrFilter that injects a non-public address must not survive:
+		// the public gate runs after FilterRemote.
+		"AddrFilter injects a non-public address": {
+			errMsg: "expected CONNECT message to contain at least one address",
+			initiator: func(s network.Stream) {
+				pbio.NewDelimitedWriter(s).WriteMsg(&holepunch_pb.HolePunch{
+					Type:     holepunch_pb.HolePunch_CONNECT.Enum(),
+					ObsAddrs: addrsToBytes([]ma.Multiaddr{ma.StringCast("/ip4/1.2.3.4/tcp/1234")}),
+				})
+				time.Sleep(10 * time.Second)
+			},
+			filter: func(_ peer.ID, _ []ma.Multiaddr) []ma.Multiaddr {
+				return []ma.Multiaddr{ma.StringCast("/ip4/10.1.2.3/tcp/22")}
+			},
+		},
+		// A CONNECT with only non-public addresses has nothing left to dial
+		// after the public-address gate, so the responder rejects it.
+		"initiator sends only non-public addresses": {
+			holePunchTimeout: 10 * time.Millisecond,
+			errMsg:           "expected CONNECT message to contain at least one address",
+			initiator: func(s network.Stream) {
+				pbio.NewDelimitedWriter(s).WriteMsg(&holepunch_pb.HolePunch{
+					Type: holepunch_pb.HolePunch_CONNECT.Enum(),
+					ObsAddrs: addrsToBytes([]ma.Multiaddr{
+						ma.StringCast("/ip4/127.0.0.1/tcp/1234"),
+						ma.StringCast("/ip4/10.1.2.3/tcp/22"),
+						ma.StringCast("/ip6/::1/tcp/1234"),
+					}),
+				})
+				time.Sleep(10 * time.Second)
 			},
 		},
 	}
