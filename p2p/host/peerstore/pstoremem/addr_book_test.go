@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	mockClock "github.com/benbjohnson/clock"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
@@ -305,6 +306,54 @@ func TestConsumePeerRecordReplacesStaleAddrs(t *testing.T) {
 	require.True(t, accepted)
 
 	require.ElementsMatch(t, []ma.Multiaddr{keep, connected, unsigned}, ab.Addrs(id))
+}
+
+// TestConnectedAddrDowngradedToFiniteTTLIsCollected covers what identify and
+// gossipsub do when a peer's last connection closes: addrs stored with
+// ConnectedAddrTTL are moved to a finite TTL. The addr book must then expire
+// and collect them, and the signed peer record with them, or a node keeps
+// an entry for every peer it ever connected to.
+func TestConnectedAddrDowngradedToFiniteTTLIsCollected(t *testing.T) {
+	clk := mockClock.NewMock()
+	ab := NewAddrBook(WithClock(clk))
+	defer ab.Close()
+
+	priv, _, err := test.RandTestKeyPair(crypto.Ed25519, 256)
+	require.NoError(t, err)
+	id, err := peer.IDFromPrivateKey(priv)
+	require.NoError(t, err)
+
+	addr := ma.StringCast("/ip4/1.2.3.4/tcp/1")
+	rec := peer.NewPeerRecord()
+	rec.PeerID = id
+	rec.Addrs = []ma.Multiaddr{addr}
+	env, err := record.Seal(rec, priv)
+	require.NoError(t, err)
+
+	for name, downgrade := range map[string]func(){
+		"UpdateAddrs": func() {
+			ab.UpdateAddrs(id, peerstore.ConnectedAddrTTL, peerstore.RecentlyConnectedAddrTTL)
+		},
+		"SetAddrs": func() {
+			ab.SetAddrs(id, []ma.Multiaddr{addr}, peerstore.RecentlyConnectedAddrTTL)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			accepted, err := ab.ConsumePeerRecord(env, peerstore.ConnectedAddrTTL)
+			require.NoError(t, err)
+			require.True(t, accepted)
+			require.Equal(t, 0, ab.addrs.NumUnconnectedAddrs())
+
+			downgrade()
+			require.Equal(t, 1, ab.addrs.NumUnconnectedAddrs(), "a finite-TTL addr must be queued for expiry")
+
+			clk.Add(peerstore.RecentlyConnectedAddrTTL + time.Second)
+			ab.gc()
+			require.Empty(t, ab.Addrs(id))
+			require.Empty(t, ab.addrs.Addrs, "expired addrs must be collected")
+			require.Nil(t, ab.GetPeerRecord(id), "a peer with no addrs must not keep its signed record")
+		})
+	}
 }
 
 func BenchmarkPeerAddrs(b *testing.B) {

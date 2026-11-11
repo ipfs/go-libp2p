@@ -128,6 +128,10 @@ func (pa *peerAddrs) PopIfExpired(now time.Time) (*expiringAddr, bool) {
 
 func (pa *peerAddrs) Update(a *expiringAddr) {
 	if a.heapIndex == -1 {
+		// A connected addr is not in the heap; queue it once its TTL turns finite.
+		if !a.IsConnected() {
+			heap.Push(pa, a)
+		}
 		return
 	}
 	if a.IsConnected() {
