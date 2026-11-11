@@ -487,6 +487,19 @@ func (cfg *Config) validate() error {
 		return errors.New("cannot use shared TCP listener with PSK")
 	}
 
+	// check for duplicate listen addresses and remove them
+	listenAddresses := cfg.ListenAddrs
+	// Remove duplicates while keeping the first occurrence of each address
+	seen := make(map[string]bool)
+	listenAddresses = slices.DeleteFunc(listenAddresses, func(addr ma.Multiaddr) bool {
+		addrStr := addr.String()
+		if seen[addrStr] {
+			return true // Remove this duplicate
+		}
+		seen[addrStr] = true
+		return false // Keep this first occurrence
+	})
+	cfg.ListenAddrs = listenAddresses
 	return nil
 }
 
@@ -494,7 +507,6 @@ func (cfg *Config) validate() error {
 //
 // This function consumes the config. Do not reuse it (really!).
 func (cfg *Config) NewNode() (host.Host, error) {
-
 	validateErr := cfg.validate()
 	if validateErr != nil {
 		if cfg.ResourceManager != nil {
