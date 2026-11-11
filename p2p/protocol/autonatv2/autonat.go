@@ -90,6 +90,7 @@ type AutoNAT struct {
 	// allowPrivateAddrs enables using private and localhost addresses for reachability checks.
 	// This is only useful for testing.
 	allowPrivateAddrs bool
+	forceReachability *network.Reachability
 }
 
 // New returns a new AutoNAT instance.
@@ -110,6 +111,7 @@ func New(dialerHost host.Host, opts ...AutoNATOption) (*AutoNAT, error) {
 		srv:                  newServer(dialerHost, s),
 		cli:                  newClient(s),
 		allowPrivateAddrs:    s.allowPrivateAddrs,
+		forceReachability:    s.forceReachability,
 		peers:                newPeersMap(),
 		throttlePeer:         make(map[peer.ID]time.Time),
 		throttlePeerDuration: s.throttlePeerDuration,
@@ -181,6 +183,9 @@ func (an *AutoNAT) Close() {
 
 // GetReachability makes a single dial request for checking reachability for requested addresses
 func (an *AutoNAT) GetReachability(ctx context.Context, reqs []Request) (Result, error) {
+	if an.forceReachability != nil && len(reqs) > 0 {
+		return Result{Addr: reqs[0].Addr, Idx: 0, Reachability: *an.forceReachability}, nil
+	}
 	var filteredReqs []Request
 	if !an.allowPrivateAddrs {
 		filteredReqs = make([]Request, 0, len(reqs))

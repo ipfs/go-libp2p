@@ -572,7 +572,11 @@ func (cfg *Config) NewNode() (host.Host, error) {
 			if !cfg.DisableMetrics {
 				mt = autonatv2.NewMetricsTracer(cfg.PrometheusRegisterer)
 			}
-			autoNATv2, err := autonatv2.New(ah, autonatv2.WithMetricsTracer(mt))
+			opts := []autonatv2.AutoNATOption{autonatv2.WithMetricsTracer(mt)}
+			if cfg.AutoNATConfig.ForceReachability != nil {
+				opts = append(opts, autonatv2.WithReachability(*cfg.AutoNATConfig.ForceReachability))
+			}
+			autoNATv2, err := autonatv2.New(ah, opts...)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create autonatv2: %w", err)
 			}

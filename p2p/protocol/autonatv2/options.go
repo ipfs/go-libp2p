@@ -1,6 +1,10 @@
 package autonatv2
 
-import "time"
+import (
+	"time"
+
+	"github.com/libp2p/go-libp2p/core/network"
+)
 
 // autoNATSettings is used to configure AutoNAT
 type autoNATSettings struct {
@@ -14,6 +18,7 @@ type autoNATSettings struct {
 	amplificatonAttackPreventionDialWait time.Duration
 	metricsTracer                        MetricsTracer
 	throttlePeerDuration                 time.Duration
+	forceReachability                    *network.Reachability
 }
 
 func defaultSettings() *autoNATSettings {
@@ -45,6 +50,15 @@ func WithServerRateLimit(rpm, perPeerRPM, dialDataRPM int, maxConcurrentRequests
 func WithMetricsTracer(m MetricsTracer) AutoNATOption {
 	return func(s *autoNATSettings) error {
 		s.metricsTracer = m
+		return nil
+	}
+}
+
+// WithReachability overrides automatic reachability detection with a fixed status.
+// The AutoNAT service continues to handle requests from other peers.
+func WithReachability(reachability network.Reachability) AutoNATOption {
+	return func(s *autoNATSettings) error {
+		s.forceReachability = &reachability
 		return nil
 	}
 }

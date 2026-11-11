@@ -107,6 +107,24 @@ func TestGetReachabilityAfterClose(t *testing.T) {
 	require.Equal(t, Result{}, res)
 }
 
+func TestForcedReachability(t *testing.T) {
+	addr := ma.StringCast("/ip4/192.168.0.1/udp/10/quic-v1")
+	for _, reachability := range []network.Reachability{
+		network.ReachabilityPrivate,
+		network.ReachabilityPublic,
+	} {
+		t.Run(reachability.String(), func(t *testing.T) {
+			an := newAutoNAT(t, nil, WithReachability(reachability))
+			defer an.Close()
+			defer an.host.Close()
+
+			res, err := an.GetReachability(context.Background(), []Request{{Addr: addr}})
+			require.NoError(t, err)
+			require.Equal(t, Result{Addr: addr, Reachability: reachability}, res)
+		})
+	}
+}
+
 func TestClientRequest(t *testing.T) {
 	an := newAutoNAT(t, nil, AllowPrivateAddrs)
 	defer an.Close()

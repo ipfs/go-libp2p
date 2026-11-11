@@ -423,6 +423,24 @@ func TestAutoNATv2Service(t *testing.T) {
 	h.Close()
 }
 
+func TestAutoNATv2ForcedReachability(t *testing.T) {
+	client, err := New(
+		EnableAutoNATv2(),
+		ForceReachabilityPrivate(),
+	)
+	require.NoError(t, err)
+	defer client.Close()
+
+	confirmedAddrsHost, ok := client.(interface {
+		ConfirmedAddrs() (reachable, unreachable, unknown []ma.Multiaddr)
+	})
+	require.True(t, ok)
+	require.Eventually(t, func() bool {
+		reachable, unreachable, unknown := confirmedAddrsHost.ConfirmedAddrs()
+		return len(reachable) == 0 && len(unreachable) > 0 && len(unknown) == 0
+	}, 10*time.Second, 50*time.Millisecond)
+}
+
 func TestDisableIdentifyAddressDiscovery(t *testing.T) {
 	h, err := New(DisableIdentifyAddressDiscovery())
 	require.NoError(t, err)
