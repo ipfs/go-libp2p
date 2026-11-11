@@ -137,7 +137,7 @@ func (w *wildcardSub) Close() error {
 	w.closeOnce.Do(func() {
 		w.w.removeSink(w.ch)
 		if w.metricsTracer != nil {
-			w.metricsTracer.RemoveSubscriber(reflect.TypeOf(event.WildcardSubscription))
+			w.metricsTracer.RemoveSubscriber(reflect.TypeFor[*event.wildcardSubscriptionType]())
 		}
 	})
 
@@ -348,7 +348,7 @@ func (n *wildcardNode) addSink(sink *namedSink) {
 	n.Unlock()
 
 	if n.metricsTracer != nil {
-		n.metricsTracer.AddSubscriber(reflect.TypeOf(event.WildcardSubscription))
+		n.metricsTracer.AddSubscriber(reflect.TypeFor[*event.wildcardSubscriptionType]())
 	}
 }
 
@@ -385,7 +385,7 @@ func (n *wildcardNode) removeSink(ch chan any) {
 	wg.Wait()
 }
 
-var wildcardType = reflect.TypeOf(event.WildcardSubscription)
+var wildcardType = reflect.TypeFor[*event.wildcardSubscriptionType]()
 
 func (n *wildcardNode) emit(evt any) {
 	if n.nSinks.Load() == 0 {
