@@ -1,8 +1,8 @@
 package swarm
 
 import (
+	"encoding/binary"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -79,6 +79,9 @@ func NoDelayDialRanker(addrs []ma.Multiaddr) []network.AddrDelay {
 //
 // We dial lowest ports first as they are more likely to be the listen port.
 func DefaultDialRanker(addrs []ma.Multiaddr) []network.AddrDelay {
+	// filterAddrs partitions addrs in place, so len(addrs) shrinks on every call
+	// below. Hold on to the total up front: that is what res ends up holding.
+	totalAddrs := len(addrs)
 	relay, addrs := filterAddrs(addrs, isRelayAddr)
 	pvt, addrs := filterAddrs(addrs, manet.IsPrivateAddr)
 	public, addrs := filterAddrs(addrs, func(a ma.Multiaddr) bool { return isProtocolAddr(a, ma.P_IP4) || isProtocolAddr(a, ma.P_IP6) })
@@ -89,7 +92,7 @@ func DefaultDialRanker(addrs []ma.Multiaddr) []network.AddrDelay {
 		relayOffset = RelayDelay
 	}
 
-	res := make([]network.AddrDelay, 0, len(addrs))
+	res := make([]network.AddrDelay, 0, totalAddrs)
 	res = append(res, getAddrDelay(pvt, PrivateTCPDelay, PrivateQUICDelay, PrivateOtherDelay, 0)...)
 	res = append(res, getAddrDelay(public, PublicTCPDelay, PublicQUICDelay, PublicOtherDelay, 0)...)
 	res = append(res, getAddrDelay(relay, PublicTCPDelay, PublicQUICDelay, PublicOtherDelay, relayOffset)...)
@@ -223,35 +226,60 @@ func getAddrDelay(addrs []ma.Multiaddr, tcpDelay time.Duration, quicDelay time.D
 // The addresses are ranked as:
 // QUICv1 IPv6 > QUICdraft29 IPv6 > QUICv1 IPv4 > QUICdraft29 IPv4 >
 // WebTransport IPv6 > WebTransport IPv4 > TCP IPv6 > TCP IPv4
+//
+// The sort in getAddrDelay calls this O(n*log(n)) times, so it walks the multiaddr
+// once and reads the port straight out of the component bytes. ValueForProtocol
+// would re-scan the address for each protocol we check and allocate a string per
+// port only to parse it straight back into an int.
 func score(a ma.Multiaddr) int {
-	ip4Weight := 0
-	if isProtocolAddr(a, ma.P_IP4) {
-		ip4Weight = 1 << 18
+	var ip4Weight, udpPort, tcpPort int
+	var hasWebTransport, hasQUIC, hasQUICV1, hasTCP, hasWebRTCDirect bool
+
+	for _, c := range a {
+		switch c.Protocol().Code {
+		case ma.P_IP4:
+			ip4Weight = 1 << 18
+		case ma.P_UDP:
+			udpPort = componentPort(c)
+		case ma.P_TCP:
+			tcpPort = componentPort(c)
+			hasTCP = true
+		case ma.P_WEBTRANSPORT:
+			hasWebTransport = true
+		case ma.P_QUIC:
+			hasQUIC = true
+		case ma.P_QUIC_V1:
+			hasQUICV1 = true
+		case ma.P_WEBRTC_DIRECT:
+			hasWebRTCDirect = true
+		}
 	}
 
-	if _, err := a.ValueForProtocol(ma.P_WEBTRANSPORT); err == nil {
-		p, _ := a.ValueForProtocol(ma.P_UDP)
-		pi, _ := strconv.Atoi(p)
-		return ip4Weight + (1 << 19) + pi
-	}
-	if _, err := a.ValueForProtocol(ma.P_QUIC); err == nil {
-		p, _ := a.ValueForProtocol(ma.P_UDP)
-		pi, _ := strconv.Atoi(p)
-		return ip4Weight + pi + (1 << 17)
-	}
-	if _, err := a.ValueForProtocol(ma.P_QUIC_V1); err == nil {
-		p, _ := a.ValueForProtocol(ma.P_UDP)
-		pi, _ := strconv.Atoi(p)
-		return ip4Weight + pi
-	}
-	if p, err := a.ValueForProtocol(ma.P_TCP); err == nil {
-		pi, _ := strconv.Atoi(p)
-		return ip4Weight + pi + (1 << 20)
-	}
-	if _, err := a.ValueForProtocol(ma.P_WEBRTC_DIRECT); err == nil {
+	// The order of these cases matters: a WebTransport address also has a QUIC_V1
+	// component, and every QUIC address also has a UDP component.
+	switch {
+	case hasWebTransport:
+		return ip4Weight + (1 << 19) + udpPort
+	case hasQUIC:
+		return ip4Weight + udpPort + (1 << 17)
+	case hasQUICV1:
+		return ip4Weight + udpPort
+	case hasTCP:
+		return ip4Weight + tcpPort + (1 << 20)
+	case hasWebRTCDirect:
 		return 1 << 21
 	}
 	return (1 << 30)
+}
+
+// componentPort reads the port out of a TCP or UDP component. Both encode it
+// as a big endian uint16.
+func componentPort(c ma.Component) int {
+	raw := c.RawValue()
+	if len(raw) != 2 {
+		return 0
+	}
+	return int(binary.BigEndian.Uint16(raw))
 }
 
 func isProtocolAddr(a ma.Multiaddr, p int) bool {

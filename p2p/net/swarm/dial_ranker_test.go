@@ -355,3 +355,117 @@ func TestDelayRankerOtherTransportDelay(t *testing.T) {
 		})
 	}
 }
+
+// scoreAddrs covers every address shape score handles, so that changes to the way
+// score walks a multiaddr can't silently reorder dials.
+func scoreAddrs() []ma.Multiaddr {
+	hosts := []string{"/ip4/1.2.3.4", "/ip6/2001:db8::1", "/ip4/192.168.0.1", "/dns4/example.com"}
+	ports := []int{1, 443, 4001, 65535}
+	const shapesPerHostPort = 7
+	const extras = 3
+	addrs := make([]ma.Multiaddr, 0, len(hosts)*len(ports)*shapesPerHostPort+extras)
+	for _, h := range hosts {
+		for _, p := range ports {
+			addrs = append(addrs,
+				ma.StringCast(fmt.Sprintf("%s/udp/%d/quic-v1", h, p)),
+				ma.StringCast(fmt.Sprintf("%s/udp/%d/quic-v1/webtransport", h, p)),
+				ma.StringCast(fmt.Sprintf("%s/udp/%d/webrtc-direct", h, p)),
+				ma.StringCast(fmt.Sprintf("%s/tcp/%d", h, p)),
+				ma.StringCast(fmt.Sprintf("%s/tcp/%d/ws", h, p)),
+				ma.StringCast(fmt.Sprintf("%s/tcp/%d/tls/ws", h, p)),
+				ma.StringCast(fmt.Sprintf("%s/tcp/%d/p2p/12D3KooWGQmdpzHXCqLno4mMxWXKNFQHASBeF99gTm2JR8Vu5Bdc/p2p-circuit", h, p)),
+			)
+		}
+	}
+	return append(addrs,
+		ma.StringCast("/ip4/1.2.3.4"),
+		ma.StringCast("/ip6/2001:db8::1"),
+		ma.StringCast("/unix/tmp/sock"),
+	)
+}
+
+func TestScoreOrdering(t *testing.T) {
+	// The exact values matter: score packs the port into the low bits and the
+	// transport and IP version into the high bits, and the sort depends on both.
+	for _, tc := range []struct {
+		addr string
+		want int
+	}{
+		{"/ip6/2001:db8::1/udp/4001/quic-v1", 4001},
+		{"/ip4/1.2.3.4/udp/4001/quic-v1", 1<<18 + 4001},
+		{"/ip6/2001:db8::1/udp/4001/quic", 1<<17 + 4001},
+		{"/ip4/1.2.3.4/udp/4001/quic", 1<<18 + 1<<17 + 4001},
+		{"/ip6/2001:db8::1/udp/4001/quic-v1/webtransport", 1<<19 + 4001},
+		{"/ip4/1.2.3.4/udp/4001/quic-v1/webtransport", 1<<19 + 1<<18 + 4001},
+		{"/ip6/2001:db8::1/tcp/4001", 1<<20 + 4001},
+		{"/ip4/1.2.3.4/tcp/4001", 1<<20 + 1<<18 + 4001},
+		{"/ip4/1.2.3.4/udp/4001/webrtc-direct", 1 << 21},
+		{"/unix/tmp/sock", 1 << 30},
+	} {
+		if got := score(ma.StringCast(tc.addr)); got != tc.want {
+			t.Errorf("score(%s) = %d, want %d", tc.addr, got, tc.want)
+		}
+	}
+
+	// Lower is better. This is the order documented on score: QUIC before
+	// WebTransport before TCP, IPv6 before IPv4, and low ports before high ones.
+	ordered := []string{
+		"/ip6/2001:db8::1/udp/1/quic-v1",
+		"/ip6/2001:db8::1/udp/4001/quic-v1",
+		"/ip6/2001:db8::1/udp/1/quic",
+		"/ip4/1.2.3.4/udp/1/quic-v1",
+		"/ip4/1.2.3.4/udp/1/quic",
+		"/ip6/2001:db8::1/udp/1/quic-v1/webtransport",
+		"/ip4/1.2.3.4/udp/1/quic-v1/webtransport",
+		"/ip6/2001:db8::1/tcp/1",
+		"/ip4/1.2.3.4/tcp/1",
+		"/ip4/1.2.3.4/udp/1/webrtc-direct",
+		"/unix/tmp/sock",
+	}
+	for i := 1; i < len(ordered); i++ {
+		prev, curr := score(ma.StringCast(ordered[i-1])), score(ma.StringCast(ordered[i]))
+		if prev >= curr {
+			t.Errorf("expected %s (%d) to rank before %s (%d)", ordered[i-1], prev, ordered[i], curr)
+		}
+	}
+}
+
+func TestScoreNoAllocs(t *testing.T) {
+	addrs := scoreAddrs()
+	if n := testing.AllocsPerRun(100, func() {
+		for _, a := range addrs {
+			_ = score(a)
+		}
+	}); n != 0 {
+		t.Errorf("score allocates %v times per run, want 0", n)
+	}
+}
+
+func BenchmarkDefaultDialRanker(b *testing.B) {
+	// A peer typically advertises a handful of addresses; 30 covers a peer behind a
+	// relay that also announces several direct addresses.
+	for _, n := range []int{4, 12, 30} {
+		src := make([]ma.Multiaddr, 0, n)
+		for i := 0; len(src) < n; i++ {
+			src = append(src,
+				ma.StringCast(fmt.Sprintf("/ip4/1.2.3.4/udp/%d/quic-v1", 4001+i)),
+				ma.StringCast(fmt.Sprintf("/ip6/2001:db8::1/udp/%d/quic-v1", 4001+i)),
+				ma.StringCast(fmt.Sprintf("/ip4/1.2.3.4/tcp/%d", 4001+i)),
+				ma.StringCast(fmt.Sprintf("/ip6/2001:db8::1/tcp/%d", 4001+i)),
+				ma.StringCast(fmt.Sprintf("/ip4/192.168.1.5/tcp/%d", 4001+i)),
+				ma.StringCast(fmt.Sprintf("/ip4/5.6.7.8/tcp/%d/p2p/12D3KooWGQmdpzHXCqLno4mMxWXKNFQHASBeF99gTm2JR8Vu5Bdc/p2p-circuit", 4001+i)),
+			)
+		}
+		src = src[:n]
+		// DefaultDialRanker partitions its input in place, so hand it a fresh copy
+		// each iteration instead of letting the order drift between runs.
+		buf := make([]ma.Multiaddr, n)
+		b.Run(fmt.Sprintf("addrs=%d", n), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				copy(buf, src)
+				DefaultDialRanker(buf)
+			}
+		})
+	}
+}
