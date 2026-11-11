@@ -626,3 +626,251 @@ func TestAddCertHashes(t *testing.T) {
 		}
 	}
 }
+
+func TestConnContext(t *testing.T) {
+	// Test that the context is cancelled when the connection is closed
+	t.Run("ContextCancelledOnClose", func(t *testing.T) {
+		s1 := GenSwarm(t, OptDisableReuseport)
+		s2 := GenSwarm(t, OptDisableReuseport)
+		defer s1.Close()
+		defer s2.Close()
+
+		// Connect the swarms
+		s1.Peerstore().AddAddrs(s2.LocalPeer(), s2.ListenAddresses(), peerstore.TempAddrTTL)
+		_, err := s1.DialPeer(context.Background(), s2.LocalPeer())
+		require.NoError(t, err)
+
+		// Get the connection
+		conns := s1.ConnsToPeer(s2.LocalPeer())
+		require.Len(t, conns, 1)
+		conn := conns[0]
+
+		// Get the context
+		ctx := conn.Context()
+		require.NotNil(t, ctx)
+
+		// Context should not be cancelled initially
+		select {
+		case <-ctx.Done():
+			t.Fatal("context should not be cancelled initially")
+		default:
+		}
+
+		// Close the connection
+		err = conn.Close()
+		require.NoError(t, err)
+
+		// Context should be cancelled now
+		select {
+		case <-ctx.Done():
+			// Expected
+		case <-time.After(time.Second):
+			t.Fatal("context should be cancelled after connection close")
+		}
+
+		// Verify the context error
+		require.Error(t, ctx.Err())
+		require.Equal(t, context.Canceled, ctx.Err())
+	})
+
+	// Test that the context is cancelled when the connection is closed with error
+	t.Run("ContextCancelledOnCloseWithError", func(t *testing.T) {
+		s1 := GenSwarm(t, OptDisableReuseport)
+		s2 := GenSwarm(t, OptDisableReuseport)
+		defer s1.Close()
+		defer s2.Close()
+
+		// Connect the swarms
+		s1.Peerstore().AddAddrs(s2.LocalPeer(), s2.ListenAddresses(), peerstore.TempAddrTTL)
+		_, err := s1.DialPeer(context.Background(), s2.LocalPeer())
+		require.NoError(t, err)
+
+		// Get the connection
+		conns := s1.ConnsToPeer(s2.LocalPeer())
+		require.Len(t, conns, 1)
+		conn := conns[0]
+
+		// Get the context
+		ctx := conn.Context()
+		require.NotNil(t, ctx)
+
+		// Context should not be cancelled initially
+		select {
+		case <-ctx.Done():
+			t.Fatal("context should not be cancelled initially")
+		default:
+		}
+
+		// Close the connection with error
+		err = conn.CloseWithError(network.ConnShutdown)
+		require.NoError(t, err)
+
+		// Context should be cancelled now
+		select {
+		case <-ctx.Done():
+			// Expected
+		case <-time.After(time.Second):
+			t.Fatal("context should be cancelled after connection close with error")
+		}
+
+		// Verify the context error
+		require.Error(t, ctx.Err())
+		require.Equal(t, context.Canceled, ctx.Err())
+	})
+
+	// Test that the context can be used with context.AfterFunc
+	t.Run("ContextAfterFunc", func(t *testing.T) {
+		s1 := GenSwarm(t, OptDisableReuseport)
+		s2 := GenSwarm(t, OptDisableReuseport)
+		defer s1.Close()
+		defer s2.Close()
+
+		// Connect the swarms
+		s1.Peerstore().AddAddrs(s2.LocalPeer(), s2.ListenAddresses(), peerstore.TempAddrTTL)
+		_, err := s1.DialPeer(context.Background(), s2.LocalPeer())
+		require.NoError(t, err)
+
+		// Get the connection
+		conns := s1.ConnsToPeer(s2.LocalPeer())
+		require.Len(t, conns, 1)
+		conn := conns[0]
+
+		// Get the context
+		ctx := conn.Context()
+		require.NotNil(t, ctx)
+
+		// Use context.AfterFunc to clean up resources
+		var cleanupCalled bool
+		var cleanupMutex sync.Mutex
+		context.AfterFunc(ctx, func() {
+			cleanupMutex.Lock()
+			cleanupCalled = true
+			cleanupMutex.Unlock()
+		})
+
+		// Close the connection
+		err = conn.Close()
+		require.NoError(t, err)
+
+		// Wait for the cleanup function to be called
+		require.Eventually(t, func() bool {
+			cleanupMutex.Lock()
+			defer cleanupMutex.Unlock()
+			return cleanupCalled
+		}, time.Second, 10*time.Millisecond, "cleanup function should be called")
+
+		// Verify the context error
+		require.Error(t, ctx.Err())
+		require.Equal(t, context.Canceled, ctx.Err())
+	})
+
+	// Test that multiple contexts from the same connection are all cancelled
+	t.Run("MultipleContextsCancelled", func(t *testing.T) {
+		s1 := GenSwarm(t, OptDisableReuseport)
+		s2 := GenSwarm(t, OptDisableReuseport)
+		defer s1.Close()
+		defer s2.Close()
+
+		// Connect the swarms
+		s1.Peerstore().AddAddrs(s2.LocalPeer(), s2.ListenAddresses(), peerstore.TempAddrTTL)
+		_, err := s1.DialPeer(context.Background(), s2.LocalPeer())
+		require.NoError(t, err)
+
+		// Get the connection
+		conns := s1.ConnsToPeer(s2.LocalPeer())
+		require.Len(t, conns, 1)
+		conn := conns[0]
+
+		// Get multiple contexts
+		ctx1 := conn.Context()
+		ctx2 := conn.Context()
+		require.NotNil(t, ctx1)
+		require.NotNil(t, ctx2)
+
+		// Both contexts should be the same instance
+		require.Equal(t, ctx1, ctx2)
+
+		// Contexts should not be cancelled initially
+		select {
+		case <-ctx1.Done():
+			t.Fatal("context1 should not be cancelled initially")
+		case <-ctx2.Done():
+			t.Fatal("context2 should not be cancelled initially")
+		default:
+		}
+
+		// Close the connection
+		err = conn.Close()
+		require.NoError(t, err)
+
+		// Both contexts should be cancelled now
+		select {
+		case <-ctx1.Done():
+			// Expected
+		case <-time.After(time.Second):
+			t.Fatal("context1 should be cancelled after connection close")
+		}
+
+		select {
+		case <-ctx2.Done():
+			// Expected
+		case <-time.After(time.Second):
+			t.Fatal("context2 should be cancelled after connection close")
+		}
+
+		// Verify both context errors
+		require.Error(t, ctx1.Err())
+		require.Equal(t, context.Canceled, ctx1.Err())
+		require.Error(t, ctx2.Err())
+		require.Equal(t, context.Canceled, ctx2.Err())
+	})
+
+	// Test that the context is cancelled when the remote peer closes the connection
+	t.Run("ContextCancelledOnRemoteClose", func(t *testing.T) {
+		s1 := GenSwarm(t, OptDisableReuseport)
+		s2 := GenSwarm(t, OptDisableReuseport)
+		defer s1.Close()
+		defer s2.Close()
+
+		// Connect the swarms
+		s1.Peerstore().AddAddrs(s2.LocalPeer(), s2.ListenAddresses(), peerstore.TempAddrTTL)
+		_, err := s1.DialPeer(context.Background(), s2.LocalPeer())
+		require.NoError(t, err)
+
+		// Get the connection
+		conns := s1.ConnsToPeer(s2.LocalPeer())
+		require.Len(t, conns, 1)
+		conn := conns[0]
+
+		// Get the context
+		ctx := conn.Context()
+		require.NotNil(t, ctx)
+
+		// Context should not be cancelled initially
+		select {
+		case <-ctx.Done():
+			t.Fatal("context should not be cancelled initially")
+		default:
+		}
+
+		// Close the remote swarm (simulating remote peer closing)
+		s2.Close()
+
+		// Wait for the connection to be closed
+		require.Eventually(t, func() bool {
+			return conn.IsClosed()
+		}, time.Second, 10*time.Millisecond, "connection should be closed")
+
+		// Context should be cancelled now
+		select {
+		case <-ctx.Done():
+			// Expected
+		case <-time.After(time.Second):
+			t.Fatal("context should be cancelled after remote close")
+		}
+
+		// Verify the context error
+		require.Error(t, ctx.Err())
+		require.Equal(t, context.Canceled, ctx.Err())
+	})
+}

@@ -380,11 +380,14 @@ func (s *Swarm) addConn(tc transport.CapableConn, dir network.Direction) (*Conn,
 	isLimited := stat.Limited
 
 	// Wrap and register the connection.
+	ctx, cancel := context.WithCancel(context.Background())
 	c := &Conn{
-		conn:  tc,
-		swarm: s,
-		stat:  stat,
-		id:    s.nextConnID.Add(1),
+		conn:   tc,
+		swarm:  s,
+		stat:   stat,
+		id:     s.nextConnID.Add(1),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
 	// we ONLY check upgraded connections here so we can send them a Disconnect message.

@@ -36,6 +36,10 @@ type Conn struct {
 	}
 
 	stat network.ConnStats
+
+	// Context and cancel function for connection lifecycle management
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 var _ network.Conn = &Conn{}
@@ -73,6 +77,9 @@ func (c *Conn) CloseWithError(errCode network.ConnErrorCode) error {
 
 func (c *Conn) doClose(errCode network.ConnErrorCode) {
 	c.swarm.removeConn(c)
+
+	// Cancel the context to signal that the connection is closed
+	c.cancel()
 
 	// Prevent new streams from opening.
 	c.streams.Lock()
@@ -291,4 +298,9 @@ func (c *Conn) GetStreams() []network.Stream {
 
 func (c *Conn) Scope() network.ConnScope {
 	return c.conn.Scope()
+}
+
+// Context returns a context that is cancelled when the connection is closed.
+func (c *Conn) Context() context.Context {
+	return c.ctx
 }

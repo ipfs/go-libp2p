@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	ic "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -192,4 +193,26 @@ func (c *conn) Scope() network.ConnScope {
 
 func (c *conn) CloseWithError(_ network.ConnErrorCode) error {
 	return c.Close()
+}
+
+// Context returns a context that is cancelled when the connection is closed.
+func (c *conn) Context() context.Context {
+	// For mock connections, we return a context that is cancelled when the connection is closed
+	// This is a simplified implementation for testing purposes
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		// Wait for the connection to be closed by checking periodically
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if c.IsClosed() {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return ctx
 }

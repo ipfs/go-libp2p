@@ -101,6 +101,11 @@ type Conn interface {
 	//
 	// You very likely do not need to use this method.
 	As(target any) bool
+
+	// Context returns a context that is cancelled when the connection is closed.
+	// This can be used to clean up resources associated with the connection
+	// and to signal early cancellation of work that depends on the connection.
+	Context() context.Context
 }
 
 // ConnectionState holds information about the connection.
