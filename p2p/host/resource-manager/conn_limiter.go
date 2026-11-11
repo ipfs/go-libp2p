@@ -103,6 +103,16 @@ func WithLimitPerSubnet(ipv4 []ConnLimitPerSubnet, ipv6 []ConnLimitPerSubnet) Op
 	}
 }
 
+// WithDisableConnLimits disables connection limiting per IP/subnet.
+// Useful with InfiniteLimits for testing/debugging.
+// Warning: removes DoS protection, only use in trusted environments.
+func WithDisableConnLimits() Option {
+	return WithLimitPerSubnet(
+		[]ConnLimitPerSubnet{{PrefixLength: 32, ConnCount: math.MaxInt}},
+		[]ConnLimitPerSubnet{{PrefixLength: 128, ConnCount: math.MaxInt}},
+	)
+}
+
 type connLimiter struct {
 	mu sync.Mutex
 

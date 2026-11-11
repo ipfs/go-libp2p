@@ -390,3 +390,24 @@ func TestNewVerifySourceAddressRateLimiter(t *testing.T) {
 		})
 	}
 }
+
+func TestWithDisableConnLimits(t *testing.T) {
+	limiter := NewFixedLimiter(InfiniteLimits)
+	rm, err := NewResourceManager(limiter, WithDisableConnLimits())
+	require.NoError(t, err)
+	defer rm.Close()
+
+	rcmgr := rm.(*resourceManager)
+
+	// should allow many connections from same IP
+	ip := netip.MustParseAddr("1.2.3.4")
+	for i := 0; i < 100; i++ {
+		require.True(t, rcmgr.connLimiter.addConn(ip))
+	}
+
+	// same for ipv6
+	ipv6 := netip.MustParseAddr("2001:db8::1")
+	for i := 0; i < 100; i++ {
+		require.True(t, rcmgr.connLimiter.addConn(ipv6))
+	}
+}

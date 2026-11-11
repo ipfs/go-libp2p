@@ -429,6 +429,60 @@ Sometimes disabling all limits is useful when you want to see how much
 resources you use during normal operation. You can then use this information to
 define your initial limits. Disable the limits by using `InfiniteLimits`.
 
+**Note:** `InfiniteLimits` only disables the resource manager limits (streams, connections, FD, memory), but the connection limiter still runs separately. The connLimiter protects against attacks from single IPs/subnets. Default limits are:
+- IPv4: 8 connections per IP (/32)
+- IPv6: 8 per /56 subnet, 64 per /48
+
+If you need to disable the connection limiter too (e.g., for testing), use `WithDisableConnLimits`:
+
+```go
+rm, err := rcmgr.NewResourceManager(
+    limiter,
+    rcmgr.WithDisableConnLimits(),
+)
+```
+
+You can also customize these limits with `WithLimitPerSubnet` and `WithNetworkPrefixLimit` - see [Connection Limiter](#connection-limiter) below.
+
+### Connection Limiter
+
+The connection limiter runs separately from the main resource manager to protect against resource exhaustion from a single IP or subnet.
+
+**Defaults:**
+- IPv4: 8 connections per IP (/32)
+- IPv6: 8 per /56 subnet, 64 per /48
+- Loopback (127.0.0.0/8, ::1/128) is unlimited
+
+**Customizing limits:**
+
+`WithLimitPerSubnet` sets default limits per subnet:
+
+```go
+rm, err := rcmgr.NewResourceManager(
+    limiter,
+    rcmgr.WithLimitPerSubnet(
+        []rcmgr.ConnLimitPerSubnet{{PrefixLength: 32, ConnCount: 16}}, // IPv4
+        []rcmgr.ConnLimitPerSubnet{{PrefixLength: 56, ConnCount: 16}}, // IPv6
+    ),
+)
+```
+
+`WithNetworkPrefixLimit` sets limits for specific networks:
+
+```go
+rm, err := rcmgr.NewResourceManager(
+    limiter,
+    rcmgr.WithNetworkPrefixLimit(
+        []rcmgr.NetworkPrefixLimit{
+            {Network: netip.MustParsePrefix("192.168.1.0/24"), ConnCount: 100},
+        },
+        nil,
+    ),
+)
+```
+
+Network prefix limits override subnet limits, so you can allow more connections from trusted networks.
+
 ### Debug "resource limit exceeded" errors
 
 These errors occur whenever a limit is hit. For example, you'll get this error if
