@@ -15,7 +15,7 @@ import (
 
 // Limit is the configuration for a token bucket rate limiter.
 // The bucket has a capacity of Burst, and is refilled at a rate of RPS tokens per second.
-// Initially, buckets are completley full, i.e. tokens in the bucket is equal to `Burst`.
+// Initially, buckets are completely full, i.e. the number of tokens in the bucket is equal to `Burst`.
 // In any given time interval T seconds, maximum events allowed will be `T*RPS + Burst`.
 type Limit struct {
 	// RPS is the rate of requests per second in steady state.
