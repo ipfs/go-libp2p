@@ -1,6 +1,7 @@
 package rcmgr
 
 import (
+	"fmt"
 	"net"
 	"net/netip"
 	"testing"
@@ -1091,6 +1092,25 @@ func TestAllowlistAndConnLimiterPlayNice(t *testing.T) {
 
 		// The connLimiter should use the limit from the allowlist
 		require.Equal(t, 8, rcmgr.(*resourceManager).connLimiter.networkPrefixLimitV6[0].ConnCount)
+	})
+
+	t.Run("IPv4 with peer ID", func(t *testing.T) {
+		peer, err := test.RandPeerID()
+		require.NoError(t, err)
+
+		rcmgr, err := NewResourceManager(NewFixedLimiter(limits), WithAllowlistedMultiaddrs([]multiaddr.Multiaddr{
+			multiaddr.StringCast(fmt.Sprintf("/ip4/1.2.3.0/ipcidr/24/p2p/%s", peer.String())),
+		}), WithNetworkPrefixLimit([]NetworkPrefixLimit{}, []NetworkPrefixLimit{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rcmgr.Close()
+
+		// The connLimiter should have the allowlisted network prefix
+		require.Equal(t, netip.MustParsePrefix("1.2.3.0/24"), rcmgr.(*resourceManager).connLimiter.networkPrefixLimitV4[0].Network)
+
+		// The connLimiter should use the limit from the allowlist
+		require.Equal(t, 8, rcmgr.(*resourceManager).connLimiter.networkPrefixLimitV4[0].ConnCount)
 	})
 
 	t.Run("Does not override if you set a limit directly", func(t *testing.T) {

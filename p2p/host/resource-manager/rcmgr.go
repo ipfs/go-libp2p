@@ -161,6 +161,7 @@ func NewResourceManager(limits Limiter, opts ...Option) (network.ResourceManager
 	for _, npLimit := range r.connLimiter.networkPrefixLimitV6 {
 		registeredConnLimiterPrefixes[npLimit.Network.String()] = struct{}{}
 	}
+	// Add network prefix limits from allowlist.allowedNetworks
 	for _, network := range allowlist.allowedNetworks {
 		prefix, err := netip.ParsePrefix(network.String())
 		if err != nil {
@@ -173,6 +174,25 @@ func NewResourceManager(limits Limiter, opts ...Option) (network.ResourceManager
 				Network:   prefix,
 				ConnCount: r.limits.GetAllowlistedSystemLimits().GetConnTotalLimit(),
 			})
+			registeredConnLimiterPrefixes[prefix.String()] = struct{}{}
+		}
+	}
+	// Add network prefix limits from allowlist.allowedPeerByNetwork
+	for _, networks := range allowlist.allowedPeerByNetwork {
+		for _, network := range networks {
+			prefix, err := netip.ParsePrefix(network.String())
+			if err != nil {
+				log.Debugf("failed to parse prefix from allowlist %s, %s", network, err)
+				continue
+			}
+			if _, ok := registeredConnLimiterPrefixes[prefix.String()]; !ok {
+				// connlimiter doesn't know about this network. Let's fix that
+				r.connLimiter.addNetworkPrefixLimit(prefix.Addr().Is6(), NetworkPrefixLimit{
+					Network:   prefix,
+					ConnCount: r.limits.GetAllowlistedSystemLimits().GetConnTotalLimit(),
+				})
+				registeredConnLimiterPrefixes[prefix.String()] = struct{}{}
+			}
 		}
 	}
 	r.verifySourceAddressRateLimiter = newVerifySourceAddressRateLimiter(r.connLimiter)
