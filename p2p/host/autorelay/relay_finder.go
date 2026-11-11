@@ -126,8 +126,12 @@ type scheduledWorkTimes struct {
 	nextAllowedCallToPeerSource time.Time
 }
 
+// cleanupSubName is the event bus subscription name used by
+// cleanupDisconnectedPeers.
+const cleanupSubName = "autorelay (relay finder)"
+
 func (rf *relayFinder) cleanupDisconnectedPeers(ctx context.Context) {
-	subConnectedness, err := rf.host.EventBus().Subscribe(new(event.EvtPeerConnectednessChanged), eventbus.Name("autorelay (relay finder)"), eventbus.BufSize(32))
+	subConnectedness, err := rf.host.EventBus().Subscribe(new(event.EvtPeerConnectednessChanged), eventbus.Name(cleanupSubName), eventbus.BufSize(32))
 	if err != nil {
 		log.Error("failed to subscribe to the EvtPeerConnectednessChanged")
 		return
@@ -203,7 +207,12 @@ func (rf *relayFinder) background(ctx context.Context) {
 	workTimer := rf.conf.clock.InstantTimer(rf.runScheduledWork(ctx, now, scheduledWork, peerSourceRateLimiter))
 	defer workTimer.Stop()
 
-	go rf.cleanupDisconnectedPeers(ctx)
+	// Tracked by refCount so that Stop() does not return until this
+	// goroutine has released its event bus subscription and stopped
+	// touching rf.relays and the metrics tracer.
+	rf.refCount.Go(func() {
+		rf.cleanupDisconnectedPeers(ctx)
+	})
 
 	// update addrs on starting the relay finder.
 	rf.updateAddrs()
