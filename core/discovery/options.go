@@ -1,6 +1,12 @@
 package discovery
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrNegativeTTL is returned by [TTL] when a negative lifetime is provided.
+var ErrNegativeTTL = errors.New("discovery: negative ttl")
 
 // DiscoveryOpt is a single discovery option.
 type Option func(opts *Options) error
@@ -24,9 +30,17 @@ func (opts *Options) Apply(options ...Option) error {
 	return nil
 }
 
-// TTL is an option that provides a hint for the duration of an advertisement
+// TTL is an option that provides a hint for the duration of an advertisement.
+//
+// TTL(0) leaves the choice of lifetime to the implementation. Negative TTLs are
+// meaningless -- advertisements are valid for at least as long as the round-trip
+// to publish them -- and would make consumers such as util.Advertise republish
+// in a tight loop, so they are rejected with [ErrNegativeTTL].
 func TTL(ttl time.Duration) Option {
 	return func(opts *Options) error {
+		if ttl < 0 {
+			return ErrNegativeTTL
+		}
 		opts.Ttl = ttl
 		return nil
 	}

@@ -30,9 +30,12 @@ func (d *RoutingDiscovery) Advertise(ctx context.Context, ns string, opts ...dis
 	}
 
 	ttl := options.Ttl
-	if ttl == 0 || ttl > 3*time.Hour {
+	if ttl <= 0 || ttl > 3*time.Hour {
 		// the DHT provider record validity is 24hrs, but it is recommended to republish at least every 6hrs
 		// we go one step further and republish every 3hrs
+		// The caller may also set Ttl directly on discovery.Options instead of going
+		// through discovery.TTL; guard against non-positive values here as well,
+		// since returning them would put consumers like util.Advertise in a tight loop.
 		ttl = 3 * time.Hour
 	}
 

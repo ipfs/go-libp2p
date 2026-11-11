@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -106,6 +107,42 @@ func TestRoutingDiscovery(t *testing.T) {
 	if pi.ID != h1.ID() {
 		t.Fatalf("Unexpected peer: %s", pi.ID)
 	}
+}
+
+func TestRoutingDiscoveryNonPositiveTTL(t *testing.T) {
+	ctx := t.Context()
+
+	h := bhost.NewBlankHost(swarmt.GenSwarm(t))
+	d := NewRoutingDiscovery(NewMockRouting(h, NewMockRoutingTable()))
+
+	t.Run("negative TTL option is rejected", func(t *testing.T) {
+		_, err := d.Advertise(ctx, "/test", discovery.TTL(-time.Second))
+		if !errors.Is(err, discovery.ErrNegativeTTL) {
+			t.Fatalf("expected %v, got %v", discovery.ErrNegativeTTL, err)
+		}
+	})
+
+	// discovery.Options is exported, so Ttl can also be set without going
+	// through discovery.TTL. Non-positive values must fall back to the default
+	// instead of being handed back to the caller.
+	t.Run("non-positive Ttl falls back to the default", func(t *testing.T) {
+		setTtl := func(ttl time.Duration) discovery.Option {
+			return func(opts *discovery.Options) error {
+				opts.Ttl = ttl
+				return nil
+			}
+		}
+
+		for _, ttl := range []time.Duration{-time.Second, 0} {
+			got, err := d.Advertise(ctx, "/test", setTtl(ttl))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := 3 * time.Hour; got != want {
+				t.Fatalf("ttl(%v) advertised for %v, want %v", ttl, got, want)
+			}
+		}
+	})
 }
 
 func TestDiscoveryRouting(t *testing.T) {
