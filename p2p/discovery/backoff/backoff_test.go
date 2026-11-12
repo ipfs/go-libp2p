@@ -85,6 +85,12 @@ func minMaxJitterTest(jitter Jitter, t *testing.T) {
 	if jitter(time.Hour, time.Nanosecond, time.Nanosecond*10, rng) > time.Nanosecond*10 {
 		t.Fatal("Max not working")
 	}
+	// A Jitter must accept min == max (see the Jitter doc: "Min must be lower
+	// than, or equal to, max"). The window collapses to a single point, so the
+	// only valid result is min. This must not panic.
+	if got := jitter(time.Hour, time.Second, time.Second, rng); got != time.Second {
+		t.Fatalf("equal min/max: expected %v, got %v", time.Second, got)
+	}
 }
 
 func TestNoJitter(t *testing.T) {

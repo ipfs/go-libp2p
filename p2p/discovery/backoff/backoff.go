@@ -34,6 +34,12 @@ func FullJitter(duration, min, max time.Duration, rng *rand.Rand) time.Duration 
 	}
 
 	normalizedDur := boundedDuration(duration, min, max) - min
+	// When min == max the window collapses to a single point and there is
+	// nothing to randomize. Guard against it: rng.Int63n panics on a
+	// non-positive argument.
+	if normalizedDur <= 0 {
+		return min
+	}
 
 	return boundedDuration(time.Duration(rng.Int63n(int64(normalizedDur)))+min, min, max)
 }
