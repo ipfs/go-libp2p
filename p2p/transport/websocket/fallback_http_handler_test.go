@@ -191,12 +191,9 @@ func TestFallbackHTTPHandler_PlainWS_H2C(t *testing.T) {
 	// http2.Transport with AllowHTTP and a custom DialTLSContext that does
 	// a plain TCP dial is the canonical way to drive prior-knowledge h2c
 	// from a Go client.
-	h2cTransport := &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(_ context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			return net.Dial(network, addr)
-		},
-	}
+	var protocols http.Protocols
+	protocols.SetUnencryptedHTTP2(true)
+	h2cTransport := &http.Transport{Protocols: &protocols}
 	defer h2cTransport.CloseIdleConnections()
 	client := &http.Client{Transport: h2cTransport, Timeout: 5 * time.Second}
 
